@@ -1,0 +1,123 @@
+---
+title: "DATA607 Assignment 2"
+author: "Alexander Simon"
+date: "2024-02-03"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+install.packages("RMySQL", repos="http://cran.us.r-project.org")
+```
+
+## Introduction
+
+The goals of this assignment are to collect data about movie ratings, store the data in an SQL database, and then import the SQL data into an R data frame.
+
+## Data collection
+
+I asked 10 friends via text message to rate 6 movies on a scale of 1 (awful) to 5 (excellent), or 0 if they had not watched it (subsequently converted to \\N for SQL).
+
+I listed the movies in alphabetical order to minimize perception of an implied ranking.
+
+-   Avatar 2
+
+-   Barbie
+
+-   News of the World
+
+-   Soul
+
+-   The Sound of Metal
+
+-   Top Gun Maverick
+
+Five replied with ratings, 3 did not reply, and 2 replied but said it was too difficult to sum up movies with a single number. So the overall response rate was 50%.
+
+I saved the ratings in a CSV file called `ratings.csv` (available in my GitHub DATA607 repository).
+
+## Loading the data into MySQL
+
+I used the RMySQL library to interface with MySQL.
+
+```{r library}
+library(RMySQL)
+```
+
+First, I established a connection to the MySQL database. I included prompts for the database username and password as a workaround to showing them in the code.
+
+```{r db-connect}
+connObj <- dbConnect(RMySQL::MySQL(), user=rstudioapi::askForPassword("MySQL username"), password=rstudioapi::askForPassword("Password"), host='localhost')
+```
+
+Next, I created a new SQL database.
+
+```{sql new-dataase, connection=connObj}
+CREATE DATABASE movies;
+```
+
+Then I created an empty table in the database that matched the structure of `ratings.csv`. Name is a text variable and the ratings are integers. The name is the primary key, so it can't be null, but the ratings may be null.
+
+```{sql create-table, connection=connObj}
+CREATE TABLE movies.ratings (
+  name VARCHAR(100) NOT NULL,
+  rating1 INT(1) NULL,
+  rating2 INT(1) NULL,
+  rating3 INT(1) NULL,
+  rating4 INT(1) NULL,
+  rating5 INT(1) NULL,
+  rating6 INT(1) NULL,
+  PRIMARY KEY (name));
+```
+
+I tried importing data from ratings.csv into the movies.ratings SQL table. The code below runs but doesn't add anything to the table.
+
+```{sql import-data, connection=connObj}
+LOAD DATA LOCAL INFILE 'ratings.csv' INTO TABLE movies.ratings FIELDS TERMINATED BY ',' LINES TERMINATED BY '\n';
+```
+
+However, if I execute the SQL command on the command line, the movies.ratings table is populated.
+
+```{sql, eval=FALSE}
+mysql> LOAD DATA LOCAL INFILE 'ratings.csv' 
+    ->             INTO TABLE movies.ratings 
+    ->             FIELDS TERMINATED BY ',' 
+    ->             LINES TERMINATED BY '\n';
+Query OK, 5 rows affected (0.00 sec)
+Records: 5  Deleted: 0  Skipped: 0  Warnings: 0
+
+mysql> SELECT * FROM movies.ratings;
++----------+---------+---------+---------+---------+---------+---------+
+| name     | rating1 | rating2 | rating3 | rating4 | rating5 | rating6 |
++----------+---------+---------+---------+---------+---------+---------+
+| Akin     |    NULL |    NULL |    NULL |    NULL |    NULL |    NULL |
+| Hannah   |    NULL |       3 |    NULL |    NULL |    NULL |    NULL |
+| Kimberly |    NULL |    NULL |    NULL |       2 |       4 |    NULL |
+| Steph    |    NULL |       3 |    NULL |    NULL |    NULL |       3 |
+| Tony     |       3 |    NULL |       4 |       3 |       5 |       5 |
++----------+---------+---------+---------+---------+---------+---------+
+```
+
+## Importing data from MySQL to R
+
+I queried the database to select all rows in the ratings table and then assigned them to a new data frame.
+
+```{r db-get-query}
+ratings <- dbGetQuery(connObj, "SELECT * FROM movies.ratings;")
+```
+
+I confirmed that the data frame contained the correct data. Missing data are represented by NA.
+
+```{r dataframe}
+ratings
+```
+
+Finally, I closed the database connection.
+
+```{r db-disconnect}
+dbDisconnect(connObj)
+```
+
+## Conclusion
+
+I successfully loaded data from a local CSV file into a MySQL database and then imported the data from MySQL into an R data frame.
