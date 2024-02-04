@@ -1,0 +1,149 @@
+---
+title: "DATA607 Assignment 1"
+author: "Alexander Simon"
+date: "2024-02-03"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+
+## Introduction
+
+This assignment is based on an article called "[How 'Qi' and 'Za' Changed Scrabble](https://fivethirtyeight.com/features/how-qi-and-za-changed-scrabble/ "Link to "How 'Qi' and 'Za' Changed Scrabble" article")" by Oliver Roeder that was posted on fivethirtyeight.com in April 2017. The article discusses how the introduction of 2 high-value words, "qi" and "za", to the Scrabble word game in March 2006 may have increased players' scores, particularly advanced players who may have been more likely to be aware of the new words than less-advanced players. I chose this article and its accompanying data set because I enjoy playing Scrabble and belonged to a Scrabble club when I was an undergraduate.
+
+In Scrabble, the letters Q and Z are the highest-value letters (10 points each). As a result, the most coveted play in the game is the placement of one of these letters on a square with a 3x score multiplier to form "qi" or "za" horizontally and vertically, resulting in a 60+ point play.
+
+Below, I load Scrabble game score data into R and perform initial operations to prepare the data for analysis.
+
+## Data
+
+### Source
+
+I downloaded scrabble_games.csv from <https://github.com/fivethirtyeight/data/tree/master/scrabble-games> and pushed the file to my GitHub repository. This file contains player names and games scores from official Scrabble tournaments between 1973 and 2017.
+
+### Input
+
+I read the raw data into R from GitHub. Of note, the scrabble_games.csv file is 164 MB, so please be patient.
+
+```{r read-data}
+scrabble_games <- read_csv('https://media.githubusercontent.com/media/alexandersimon1/Data607/main/Assignment1/scrabble_games.csv')
+```
+
+### Dimensions
+
+The data frame (tibble) has 1,542,642 rows (games) and 19 columns (variables).
+
+## Data checks
+
+### Data types
+
+The 19 variables included 2 character variables, 14 double variables, 2 logical variables, and 1 date variable. Based on the column names, the data type for each column appeared to be correct (eg, the data type of the 'date' column is \<date\>).
+
+### Duplicate rows
+
+The dimensions of the tibble with only distinct rows were the same as the original, so there were no duplicate rows.
+
+```{r check-dup-rows}
+scrabble_games2 <- scrabble_games %>%
+  distinct()
+```
+
+### Missing values
+
+There were no missing values (NA).
+
+```{r check-NA}
+total_missing <- sum(is.na(scrabble_games2))
+```
+
+## Data transformations
+
+The most important variables needed to analyze the data include the name, score, and old ratings for both winners and losers, and the date of the game. I only kept the old ratings because they indicate a player's skill level before the game (ie, before a game that s/he may have played "qi" or "za"). I also kept the game and player IDs for identification purposes.
+
+In addition, I inserted underscores into the column names to make them easier to read.
+
+```{r select-columns}
+scrabble_games2 <- scrabble_games %>%
+  select(
+    game_id = gameid,
+    winner_id = winnerid,
+    winner_name = winnername,
+    winner_score = winnerscore,
+    winner_old_rating = winneroldrating,
+    loser_id = loserid,
+    loser_name = losername,
+    loser_score = loserscore,
+    loser_old_rating = loseroldrating,
+    date
+  )
+```
+
+Next, I removed rows with scores less than or equal to zero for both the winner and loser, because they are not informative for this analysis.[^1] I performed this step before subsequent transformations to reduce the amount of computation.
+
+[^1]: In Scrabble tournaments, when neither player can create a word for 6 consecutive turns at the beginning of a game, the game ends. Each player's score is the score earned from played tiles minus the point value of tiles that have been drawn but not played. If no plays are made in a game, this results in a negative final score. I removed these games because they result from bad luck (ie, drawing a combination of tiles that cannot form a valid word) rather than lack of skill in scoring points.
+
+    Reference: <https://www.reddit.com/r/scrabble/comments/akkxhi/how_does_someone_win_a_scrabble_tournament_with_a/>
+
+```{r filter}
+scrabble_games2 <- scrabble_games2 %>%
+  filter(winner_score > 0 & loser_score > 0)
+```
+
+Because the game date is an important variable, I moved it to the first column to make it easier to view.
+
+```{r relocate-date}
+scrabble_games2 <- scrabble_games2 %>%
+  relocate(date)
+```
+
+I also sorted the tibble by the winner's score in descending order.
+
+```{r sort}
+scrabble_games2 <- scrabble_games2 %>%
+  arrange(desc(winner_score))
+```
+
+Finally, I added a variable, score_difference, which is the difference between the winner's score and the loser's score.
+
+```{r calc-score-diff}
+scrabble_games2 <- scrabble_games2 %>%
+  mutate(score_difference = winner_score - loser_score)
+```
+
+The final tibble has 770,653 rows (games) and 11 columns.
+
+```{r view-final}
+glimpse(scrabble_games2)
+```
+
+## Exploratory data analysis
+
+I created a histogram to examine the distribution of winner and loser scores in the data set. As expected, loser scores tended to be less than winner scores; however, the distributions overlap. These distributions are similar, but not identical, to those shown in the fivethirtyeight.com article, which may be due to differences in how the data were transformed.
+
+Due to the large number of observations, the histogram plot may take some time to appear.
+
+```{r histogram}
+ggplot(scrabble_games2) + 
+  geom_histogram(aes(x = loser_score), binwidth = 5, color = "red", alpha = 0.5) +
+    geom_text(
+      label = "Loser scores", x = 200, y = 25000, color = "red"
+    ) +
+  geom_histogram(aes(x = winner_score), binwidth = 5, color = "blue", alpha = 0.5) +
+    geom_text(
+      label = "Winner scores", x = 550, y = 25000, color = "blue"
+    ) +
+  labs(
+    x = "Score", y = "Count"
+  )
+```
+
+## Findings and recommendations
+
+I successfully pulled in the Scrabble data set and prepared it for analysis.
+
+For next steps, the first thing to do would be to attempt to reproduce the comparison of weekly average scores before and after March 2006 that was described in the fivethirtyeight.com article.
+
+Second, I could examine differences in scores before and after March 2006 among the subset of games that were won by a large margin (ie, \>60 points), which could reflect strategic plays with "qi" and "za" near the end of games that losers could not overcome. This analysis could be further refined by using players' ratings to group games by players' skill levels.
