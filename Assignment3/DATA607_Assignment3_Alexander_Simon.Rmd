@@ -1,0 +1,144 @@
+---
+title: "DATA607 Assignment 3"
+author: "Alexander Simon"
+date: "2024-02-09"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+
+**1. Using the 173 majors listed in fivethirtyeight.com’s College Majors dataset, provide code that identifies the majors that contain either "DATA" or "STATISTICS"**
+
+I downloaded majors-list.csv from <https://github.com/fivethirtyeight/data/tree/master/college-majors> and saved it to my GitHub repository. This file contains college majors in the American Community Survey 2010-2012 Public Use Microdata Series provided by the US Census Bureau.
+
+I read the raw data from GitHub into a data frame (tibble).
+
+```{r read-data}
+majors <- read_csv('https://media.githubusercontent.com/media/alexandersimon1/Data607/main/Assignment3/majors-list.csv')
+```
+
+Then I searched for the majors that contained either "DATA" or "STATISTICS". There were 3 majors that matched these criteria. (Note: The outermost parentheses print the result of the expression inside.)
+
+```{r regex-majors}
+(interesting_majors <- majors %>%
+  filter(str_detect(Major, "DATA") | str_detect(Major, "STATISTICS")))
+```
+
+**2. Write code that transforms the data below:**
+
+[1] "bell pepper" "bilberry" "blackberry" "blood orange"
+
+[5] "blueberry" "cantaloupe" "chili pepper" "cloudberry"
+
+[9] "elderberry" "lime" "lychee" "mulberry"
+
+[13] "olive" "salal berry"
+
+Into a format like this:
+
+c("bell pepper", "bilberry", "blackberry", "blood orange", "blueberry", "cantaloupe", "chili pepper", "cloudberry", "elderberry", "lime", "lychee", "mulberry", "olive", "salal berry")
+
+The input string is essentially a vector, so I created the vector:
+
+```{r define-foods}
+foods <- c("bell pepper", "bilberry", "blackberry", "blood orange", "blueberry", "cantaloupe", "chili pepper", "cloudberry", "elderberry", "lime", "lychee", "mulberry", "olive", "salal berry")
+```
+
+I performed the transformation from the inside out. First, I added quotes around each element (food). The quote character needs to be escaped, which introduces a backslash that will be omitted in a subsequent step.
+
+```{r add-quotes}
+(q <- paste0("\"", foods, "\""))
+```
+
+Next, I collapsed the quoted words into a string, separating each word with a comma.
+
+```{r collapse-to-string}
+(s <- paste0(q, collapse = ", "))
+```
+
+Then, I added the leading and trailing characters.
+
+```{r add-leader-trailer}
+(w <- paste0("c(", s, ")"))
+```
+
+Finally, I parsed the backslashes as escape characters. The output is now in the desired format.
+
+```{r transformed-foods}
+cat(w)
+```
+
+**3. Describe, in words, what these expressions will match:**
+
+-   **(.)\\1\\1** - matches all words with 3 or more adjacent characters that are identical (eg, aaa). \\1 is a back reference to the most recent match of group 1, which is (.) [any character].
+
+-   **"(.)(.)\\\\2\\\\1"** - matches a leading quotation mark, followed by 2 characters (any), then the literal string \\2\\1, and a trailing quotation mark (eg, "ab\\2\\1"). The regular expression \\\\2\\\\1 matches \\2\\1 because the first backslash escapes the second backslash.
+
+-   **(..)\\1** - matches all words with 2 adjacent repeats of a pair of characters (eg, abab). \\1 is a back reference to group 1, (..), which matches any 2 adjacent characters.
+
+-   **"(.).\\\\1.\\\\1"** - matches a leading quotation mark, followed by 2 characters (any), then the literal string \\1, followed by any character, then the literal string \\1, and a trailing quotation mark. As explained above, the regular expression \\\\1 matches \\1 because the first backslash escapes the second backslash.
+
+-   **"(.)(.)(.).\*\\\\3\\\\2\\\\1"** - matches a leading quotation mark, followed by 3 or more characters (any), then the literal string \\3\\2\\1, and a trailing quotation mark. The regular expression .\* matches any character 0 or more times. As explained above, the first backslash in \\\\ escapes the second backslash.
+
+**4. Construct regular expressions to match words that:**
+
+**a) Start and end with the same character.**
+
+<div>
+
+\^(.).\*\\1\$
+
+</div>
+
+Explanation:
+
+-   \^ and \$ match the beginning and end of a word
+
+-   (.) matches any character at the first position of a string. The parentheses enclose a group (group 1) for back reference
+
+-   .\* matches any character 0 or more times
+
+-   \\1 refers to group 1 (first character)
+
+-   Together, this regular expression will match words that have identical characters at the beginning and end, with any number of characters in between.
+
+**b) Contain a repeated pair of letters (e.g. "church" contains "ch" repeated twice).**
+
+<div>
+
+(.)(.).\*\\1\\2
+
+</div>
+
+Explanation:
+
+-   (.)(.) matches 2 adjacent characters (any). Each parenthesis encloses a group for back reference
+
+-   \\1\\2 matches the characters captured by (.)(.)
+
+-   .\* matches any number of characters in between the 2 sets of characters above
+
+-   Together, this regular expression will match words that repeat a pair of adjacent characters, with any number of characters in between.
+
+**c) Contain one letter repeated in at least three places (e.g. "eleven" contains three "e"s).**
+
+<div>
+
+(.).\*\\1.\*\\1
+
+</div>
+
+Explanation:
+
+-   (.) matches any character. The parentheses enclose a group (group 1) for back reference.
+
+-   This is followed by 2 repetitions of:
+
+    -   .\* that matches any character 0 or more times
+
+    -   \\1 that refers to group 1 (matched by the first character)
+
+-   Together, this regular expression will match a character repeated 3 or more times with any number of characters in between each occurrence of the character.
