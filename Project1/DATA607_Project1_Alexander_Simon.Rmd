@@ -1,7 +1,7 @@
 ---
 title: "DATA607 Project 1"
 author: "Alexander Simon"
-date: "2024-02-16"
+date: "2024-02-17"
 output: html_document
 ---
 
@@ -138,7 +138,7 @@ Implementing this in a concise way proved to be more challenging than I anticipa
 
     -   rowwise(): <https://stackoverflow.com/questions/49411812/sum-multiple-variables-listed-in-character-vector-in-dplyrmutate>
 
-I used floor division to calculate the average rating because chess ELO ratings are rounded down.[^4]
+I used floor division to calculate the average rating because chess ELO ratings are rounded down.[^4] In the event that a player did not have any opponents, I assigned the average opponent pre-rating to NA to avoid zero division.
 
 [^4]: <https://en.wikipedia.org/wiki/Elo_rating_system#>
 
@@ -155,7 +155,8 @@ data_wide <- data_wide %>%
             .cols = ends_with("_opponent_ID"),
             .fns = ~ !is.na(.x))),
       
-      Average_opponent_pre_rating = floor(Total_opponent_pre_ratings / Number_of_opponents)
+      Average_opponent_pre_rating = ifelse(Number_of_opponents == 0, NA, 
+                                           floor(Total_opponent_pre_ratings / Number_of_opponents))
   )
 ```
 
