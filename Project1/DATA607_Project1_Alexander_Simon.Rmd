@@ -1,0 +1,184 @@
+---
+title: "DATA607 Project 1"
+author: "Alexander Simon"
+date: "2024-02-16"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+
+## Introduction
+
+The aim of this project is to use a text file with chess tournament results to create a summary of each player's name, state, total points, pre-rating, and average pre-rating of his/her opponents in games that resulted in a win, loss, or draw.
+
+## Data
+
+### Source
+
+I downloaded the tournament info file (tournamentinfo.txt) on Blackboard and saved it to my GitHub repository.
+
+### Characteristics
+
+Visual inspection of this file (ie, in a text editor) showed that it is a structured text file. The first 4 lines were headers. Subsequent lines were repeating blocks of 3 lines (2 lines of player data + a divider line of dashes). On lines containing player data, fields were separated by the \| character. There were no blank lines.
+
+### Input
+
+I read the data from the text file into a character vector.
+
+```{r read-data}
+lines <- read_lines("https://raw.githubusercontent.com/alexandersimon1/Data607/main/Project1/tournamentinfo.txt", skip = 4)
+```
+
+### Transformations
+
+First, I deleted the divider lines.
+
+```{r delete-dividers}
+dividers <- which(grepl("^-", lines))
+lines2 <- lines[-dividers]
+```
+
+Next, I extracted the fields into a data frame. Because the field delimiter is also the right border of the text table, the last column of the data frame will only contain null values and can be deleted.
+
+```{r create-df}
+data <- read.table(text = lines2, sep = "|", col.names = c("Pair", "Name", "Points", "R1", "R2", "R3", "R4", "R5", "R6", "R7", "NA"))
+data <- data[1:(length(data) - 1)]
+```
+
+The data would be more intuitive and easier to work with if all the data for each player were in a single row. To do this, I separated the data frame into even and odd rows and then merged the resulting data frames by column.
+
+```{r transform-df}
+row1 <- data %>% filter(row_number() %%2 == 1)
+row2 <- data %>% filter(row_number() %%2 == 0)
+data_wide <- cbind(row1, row2)
+colnames(data_wide) = c("Pair", "Name", "Points", "R1", "R2", "R3", "R4", "R5", "R6", "R7", "State", "ID_Rating", "Points_2", "R1_2", "R2_2", "R3_2", "R4_2", "R5_2", "R6_2", "R7_2")
+```
+
+I simplified the data frame by selecting the columns needed to generate the desired output.
+
+```{r select-columns}
+data_wide <- data_wide %>% 
+  select(Pair, Name, State, Points, R1, R2, R3, R4, R5, R6, R7, ID_Rating)
+```
+
+I then used regular expressions to extract the opponent IDs (pair number) for each round.
+
+```{r extract-opponentID}
+data_wide <- data_wide %>%
+  separate_wider_regex(
+    c(R1:R7),
+    patterns = c(
+      "[BDHLUWX] {2,4}",
+      # Use non-capturing group since only Win, Lose, and Draw have opponent data
+      opponent_ID = "(?:\\d+)?"
+    ),
+    # Disambiguate new columns with a separator between input column name and new column name
+    names_sep = "_"
+  )
+```
+
+Similarly, I extracted players' pre-ratings:
+
+```{r extract-pre-rating}
+data_wide <- data_wide %>%
+  separate_wider_regex(
+    ID_Rating,
+    patterns = c(
+      " \\d{8} / R: +",
+      Pre_rating = "\\d+",
+      "[ P0-9]*-> *",
+      "\\d+[ P0-9]*"
+    )
+  )
+```
+
+To ensure that missing values are handled appropriately in subsequent operations, I replaced all blank values with NA.
+
+```{r fill-na}
+data_wide <- replace(data_wide, data_wide=='', NA)
+```
+
+In addition, I coerced the Pre_rating vector to be numeric to enable subsequent calculations.
+
+```{r coerce-ratings}
+data_wide$Pre_rating <- as.numeric(data_wide$Pre_rating)
+```
+
+I also trimmed leading and trailing white space from the Pair vector.[^1]
+
+[^1]: I probably should have done this in an earlier step, but I noticed it while troubleshooting the named vector (next step).
+
+```{r trim-whitespace}
+data_wide$Pair <- str_trim(data_wide$Pair)
+```
+
+## Calculate average pre-rating of opponents
+
+Now, the data frame is ready to calculate the average pre-rating of each player's opponents.
+
+To facilitate this, I created a named vector with player (pair) number and pre-rating as key-value pairs.[^2] I used this vector to look up the pre-rating corresponding to a particular opponent ID.
+
+[^2]: Inspired by <https://www.infoworld.com/article/3323006/do-more-with-r-quick-lookup-tables-using-named-vectors.html>
+
+```{r create-lookup}
+Pre_ratings <- data_wide$Pre_rating
+names(Pre_ratings) <- data_wide$Pair
+```
+
+For each player, the average opponent pre-rating is the total pre-ratings of all opponents in each round that resulted in a win, loss, or draw, divided by the number of opponents in the games with those outcomes.
+
+Implementing this in a concise way proved to be more challenging than I anticipated, and I went through many iterations to develop the code below. My key insights were (1) using [across()](https://dplyr.tidyverse.org/reference/across.html) to apply functions to multiple columns (opponents) without explicitly specifying the columns and (2) using [rowwise()](https://dplyr.tidyverse.org/articles/rowwise.html) to perform these operations on each row (player).[^3]
+
+[^3]: Webpages that helped me:
+
+    -   across(): <https://www.r4epi.com/column-wise-operations-in-dplyr>
+
+    -   rowwise(): <https://stackoverflow.com/questions/49411812/sum-multiple-variables-listed-in-character-vector-in-dplyrmutate>
+
+I used floor division to calculate the average rating because chess ELO ratings are rounded down.[^4]
+
+[^4]: <https://en.wikipedia.org/wiki/Elo_rating_system#>
+
+```{r calc-avg-opponent-pre-rating}
+data_wide <- data_wide %>%
+  rowwise %>%  
+  mutate(
+      Total_opponent_pre_ratings = sum(across(
+            .cols = ends_with("_opponent_ID"),
+            .fns = ~ unname(Pre_ratings[.x])),
+          na.rm = TRUE),
+      
+      Number_of_opponents = sum(across(
+            .cols = ends_with("_opponent_ID"),
+            .fns = ~ !is.na(.x))),
+      
+      Average_opponent_pre_rating = floor(Total_opponent_pre_ratings / Number_of_opponents)
+  )
+```
+
+> **Questions**: Is there a way to calculate the numerator and denominator with a single across() function? Alternatively, is there a simpler approach to calculate the average opponent pre-rating?
+
+## Output results
+
+I selected the columns needed for output and sorted the data by total points and then by pre-rating in descending order.
+
+```{r organize-results}
+final_results <- data_wide %>% 
+  select(Name, State, Points, Pre_rating, Average_opponent_pre_rating) %>%
+  arrange(desc(Points), desc(Pre_rating))
+```
+
+Finally, I output the results to a CSV file.
+
+```{r write-csv}
+write.csv(final_results, file='tournamentinfo_summary.csv', row.names = FALSE)
+```
+
+## Conclusions
+
+I successfully imported and transformed a text file containing chess tournament data to calculate the average opponent pre-rating for each player. The results were saved to a CSV file that can be used to perform additional analyses.
+
+## 
