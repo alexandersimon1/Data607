@@ -174,7 +174,7 @@ final_results <- data_wide %>%
 Finally, I output the results to a CSV file.
 
 ```{r write-csv}
-write.csv(final_results, file='tournamentinfo_summary.csv', row.names = FALSE)
+write.csv(final_results, file='tournamentinfo_summary.csv', row.names = FALSE, quote = FALSE)
 ```
 
 ## Conclusions
