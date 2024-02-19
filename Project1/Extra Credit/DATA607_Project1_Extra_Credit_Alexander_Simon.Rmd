@@ -1,0 +1,300 @@
+---
+title: "DATA607 Project 1 Extra Credit"
+author: "Alexander Simon"
+date: "2024-02-18"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+
+## Introduction
+
+The [Elo rating system](https://en.wikipedia.org/wiki/Elo_rating_system) is a statistical method for rating and comparing the relative skill level of players in games such as chess. The difference in Elo ratings between 2 players can be used to predict the outcome of a game (ie, win or loss). The rating difference also determines the number of points each player gains from a win or loses from a loss.
+
+The primary aim of this extra credit assignment is to identify chess players who over-performed or under-performed the most in a tournament, based on the difference between their expected and actual scores. The latter is the total points earned from games won (1 point), drawn (0.5 point), or lost (0 points).
+
+I calculated the expected score using the official US Chess Federation (USCF) formula.[^1] Because this formula is used to calculate player ratings, I also attempted to reproduce the post-ratings for each player from their pre-rating and game outcomes shown in the tournament cross table.
+
+[^1]: Glickman ME and Doan T. The US Chess Rating system. September 2, 2020. Available at: <https://new.uschess.org/sites/default/files/media/documents/the-us-chess-rating-system-revised-september-2020.pdf>
+
+## Data input
+
+I read the tournament cross table from my GitHub repository.
+
+```{r read-data}
+lines <- read_lines("https://raw.githubusercontent.com/alexandersimon1/Data607/main/Project1/tournamentinfo.txt", skip = 4)
+```
+
+### 
+
+## Data transformation
+
+Because this assignment is an extension of Project 1, I skip the detailed explanation of how I extracted data from the cross table text file and prepared it for analysis. If needed, expand the code block in the markdown file and/or see my Project 1 assignment.
+
+```{r transform-data, echo = FALSE}
+# Create data frame
+dividers <- which(grepl("^-", lines))
+lines2 <- lines[-dividers]
+data <- read.table(text = lines2, sep = "|", col.names = c("Pair", "Name", "Points", "R1", "R2", "R3", "R4", "R5", "R6", "R7", "NA"))
+data <- data[1:(length(data) - 1)]
+row1 <- data %>% filter(row_number() %%2 == 1)
+row2 <- data %>% filter(row_number() %%2 == 0)
+data_wide <- cbind(row1, row2)
+colnames(data_wide) = c("Pair", "Player_name", "Actual_score", "R1", "R2", "R3", "R4", "R5", "R6", "R7", "State", "ID_Rating", "Points_2", "R1_2", "R2_2", "R3_2", "R4_2", "R5_2", "R6_2", "R7_2")
+data_wide <- data_wide %>% 
+  select(Pair, Player_name, ID_Rating, Actual_score, R1, R2, R3, R4, R5, R6, R7)
+
+# Extract fields
+data_wide <- data_wide %>%
+  separate_wider_regex(
+    c(R1:R7),
+    patterns = c(
+      "[BDHLUWX] {2,4}",
+      opponent_ID = "(?:\\d+)?"
+    ),
+    names_sep = "_"
+  )
+data_wide <- data_wide %>%
+  separate_wider_regex(
+    ID_Rating,
+    patterns = c(
+      " \\d{8} / R: +",
+      Player_pre_rating = "\\d+",
+      "[ P0-9]*-> *",
+      Player_post_rating = "\\d+",
+      "[ P0-9]*"
+    )
+  )
+
+# Clean up
+data_wide <- replace(data_wide, data_wide=='', NA)
+data_wide$Player_pre_rating <- as.numeric(data_wide$Player_pre_rating)
+data_wide$Player_post_rating <- as.numeric(data_wide$Player_post_rating)
+data_wide$Actual_score <- as.numeric(data_wide$Actual_score)
+data_wide$Pair <- str_trim(data_wide$Pair)
+```
+
+## Define a named vector for pre-rating lookup
+
+To facilitate subsequent calculations, I created a named vector with player (pair) number and pre-rating as key-value pairs. This vector is used to look up a player's pre-rating given the player number.
+
+```{r create-lookup}
+get_pre_rating <- data_wide$Player_pre_rating
+names(get_pre_rating) <- data_wide$Pair
+```
+
+## Actual score
+
+The actual score for each player was provided in the tournament cross table.
+
+## Expected score
+
+I used the formula for the expected score that was provided in the "[Elo Rating System for Chess and Beyond](https://www.youtube.com/watch?v=AsYfbmp0To0)" YouTube video referenced on Blackboard. This is the same formula that the US Chess Federation uses to calculate the "winning expectancy" ($W_e$) between a player with rating $R$ and his/her $i$-th opponent with rating $R_i$.
+
+$$
+W_e(R, R_i) = \frac{1}{1 + 10^{-(\frac{(R-R_i)}{400})}} 
+$$
+
+```{r calc-expected-score}
+winning_expectancy <- function(rating1, rating2) {
+  expected_score <- 1 / ( 1 + 10^(-1 * ( (rating1 - rating2) / 400 ) ) )
+  return(expected_score)
+}
+
+data_wide <- data_wide %>%
+  rowwise %>%  
+  mutate(
+      Total_expected_score = 
+        round(
+          sum(across(
+            .cols = ends_with("_opponent_ID"),
+            .fns = ~ winning_expectancy(Player_pre_rating, unname(get_pre_rating[.x]))),
+          na.rm = TRUE),
+        digits = 2)
+  )
+```
+
+## Over- and under-performing players
+
+To identify the players who played better or worse than expected, I sorted the players by the difference between their actual and expected scores.
+
+```{r expected-vs-actual-score}
+data_wide <- data_wide %>%
+  mutate(
+    Score_difference = round(Actual_score - Total_expected_score, digits = 2)) %>%
+  arrange(desc(Score_difference))
+```
+
+I then tidied up the columns.
+
+```{r select-columns}
+data_wide <- data_wide %>%
+  select(Player_name, Player_pre_rating, Player_post_rating, Actual_score,
+         Total_expected_score, Score_difference) %>%
+  rename(Expected_score = Total_expected_score) %>%
+  rename(Pre_rating = Player_pre_rating) %>%
+  rename(Post_rating = Player_post_rating)
+```
+
+The 5 players who over-performed the most relative to their expected score are:
+
+```{r most-overperforming-players}
+head(data_wide, 5)
+```
+
+The 5 players who under-performed the most relative to their expected score are:
+
+```{r most-underperforming-players}
+tail(data_wide, 5)
+```
+
+## Post-ratings
+
+The US Chess Federation uses several different algorithms to calculate player ratings. Here, I only implement the standard rating formula. A player's post-rating $R_s$ is given by
+
+$$
+R_s = R_0 + K\sum_{i=1}^{m}(S_i-E_i) + B
+$$
+
+where $R_0$ is the player's pre-rating, $K$ is the development coefficient, $m$ is the number of games that the player completed in the current event, $S$ is the player's total score, $E$ is the player's total expected score, and $B$ is a bonus amount.
+
+From the tournament cross table, we know there were 7 rounds, so $m = 7$, and we also know $R_0$ and $\sum{S}$ for each player. In addition, $\sum{E}$ was calculated in the previous section.
+
+For the remaining variables,
+
+-   The development coefficient, $K$, is a factor that adjusts for differences in player experience, such that a new player has a higher K-factor than a more experienced player. $K$ is defined as
+
+$$
+ K = \frac{800}{N' + m}
+$$
+
+where $N'$ is the "effective number of games", which is a measure of the number of games that a player has previously played. It is defined as the smaller of $N$ = number of tournament games the player has competed in, or
+
+$$
+N^* = \frac{50}{\sqrt{0.662 + 0.00000739(2569 - R_0)^2}}
+$$
+
+Since $N$ is not known, I made an assumption that all players in the tournament had played many games in the past (ie, $N > N^*$) and used $N^*$ in the formula for $K$.
+
+```{r calc-effective-games}
+data_wide <- data_wide %>%
+  mutate(
+      N_star = round(50 / (sqrt(0.662 + (0.00000739*(2569 - Pre_rating)^2))), 
+                     digits = 3),
+      K = round(800 / (N_star + 7), digits = 3)
+  )
+```
+
+-   The bonus amount, $B$, is awarded to players who perform unusually better than expected and is defined as
+
+$$
+B = max(0, K(S - E) - 14\sqrt{m'})
+$$
+
+```{r calc-bonus}
+calc_bonus <- function(K, S, E) {
+  bonus <- K*(S - E) - 14*sqrt(7)
+  if (bonus > 0) {
+    return(bonus)
+  }
+  return(0)
+}
+
+data_wide <- data_wide %>%
+  mutate(
+    B = round(calc_bonus(K, Actual_score, Expected_score), digits = 3)
+  )
+```
+
+As expected, the players who over-performed the most relative to their bonus amount were the same as those identified based on the difference between the actual and expected scores (see previous section). However, the order of the players' names were different.
+
+```{r compare-overperform-bonus}
+overperformers_by_bonus <- data_wide %>%
+  select(Player_name, Score_difference, B) %>%
+  arrange(desc(B)) %>%
+  rename(USCF_Bonus = B)
+head(overperformers_by_bonus, 5)
+```
+
+Next, I calculated each player's rating change and post-rating.
+
+```{r calc-post-rating}
+data_wide <- data_wide %>%
+  mutate(
+    Rating_change = round(K * (Actual_score - Expected_score) + B, digits = 1),
+    Calculated_post_rating = floor(Pre_rating + Rating_change)
+  )
+```
+
+To compare the calculated post-rating and the actual post-rating in the cross table, I calculated the difference between the two ratings.
+
+```{r rating-difference-calc}
+data_wide <- data_wide %>%
+  mutate(
+    Rating_difference = Calculated_post_rating - Post_rating
+  )
+```
+
+A histogram shows that the calculated post-rating was close to the actual post-rating for most, but not all, players.
+
+```{r rating-difference-hist}
+ggplot(data_wide, aes(x = Rating_difference)) +
+  geom_histogram(binwidth = 25) +
+  xlab("Calculated post-rating - Actual post-rating") +
+    theme(axis.title.x = element_text(face = "bold")) +
+  ylab("Count") +
+    theme(axis.title.y = element_text(face = "bold"))
+```
+
+The differences may have been due to the assumption that I made about the number of games that players had played before the tournament, which was used to calculate the $K$-factor. Because $K$ is a multiplicative factor, changing its value could result in large differences in a players' rating change.
+
+To examine this possibility, I plotted the rating difference vs $K$ for all players. I also colored the data points according to the bonus amount, $B$.
+
+```{r k-vs-rating-diff}
+ggplot(data_wide, aes(x = Rating_difference, y = K, color = B)) +
+  geom_point() +
+  geom_segment(aes(x = -427, y = 49.5, xend = -427, yend = 51.5), 
+               arrow = arrow(length = unit(0.25, "cm")), linewidth=0.5, color = "red") +
+  geom_curve(aes(x = -20, y = 27, xend = -30, yend = 34), 
+             curvature = -0.5, linetype = 2, color = "purple") + 
+  geom_curve(aes(x = 10, y = 27, xend = 18, yend = 34), 
+             curvature = 0.5, linetype = 2, color = "purple") +   
+  xlab("Calculated post-rating - Actual post-rating") +
+    theme(axis.title.x = element_text(face = "bold")) +
+  ylab(expression("more experienced" %<-% "K" %->% "less experienced")) +
+    theme(axis.title.y = element_text(face = "bold"))
+```
+
+The first observation from this plot is that the player with the most underestimated post-rating (red arrow) had the highest $K$-factor. Because $K$ is higher for less experienced players, it makes sense that the assumption that the tournament players had played many games in the past was not correct for this player.
+
+In addition, this player had a relatively large bonus. These observations suggest that this player was relatively inexperienced but got lucky during the tournament (ie, performed much better than expected). Among more experienced players who performed as expected, the difference between calculated and actual post-ratings is much smaller (data points in the purple oval).
+
+These results suggest that the post-ratings in the tournament cross table were derived from the USCF standard rating formula, but there is insufficient information about the players' experience to reproduce all post-ratings from the tournament cross table alone.
+
+## Output
+
+I saved the results of my analyses to a CSV file. The results are sorted by the difference between players' actual and expected scores since this was the original aim of this assignment.
+
+```{r select-columns-final}
+final_results <- data_wide %>%
+  select(Player_name, Pre_rating, Actual_score, Expected_score, Score_difference, 
+         Calculated_post_rating, Post_rating, Rating_difference) %>%
+  rename(Actual_post_rating = Post_rating) %>%
+  arrange(desc(Score_difference))
+```
+
+```{r write-csv}
+write.csv(final_results, file='tournamentinfo_analysis.csv', 
+          row.names = FALSE, quote = FALSE)
+```
+
+## 
+
+## Conclusions
+
+I successfully implemented the USCF winning expectancy formula to calculate the expected score for the chess tournament players. Comparing players' expected score with their actual score showed which players played better or worse than expected.
+
+I also attempted to reproduce the post-ratings shown in the tournament cross table using the USCF standard rating formula. Most of the calculated ratings were close to the actual ratings, but there were some discrepancies that were likely due to incomplete information about the amount of experience players had before the tournament.
