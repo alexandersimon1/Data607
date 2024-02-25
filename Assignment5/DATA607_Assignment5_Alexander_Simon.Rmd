@@ -1,0 +1,284 @@
+---
+title: "DATA607 Assignment 5"
+author: "Alexander Simon"
+date: "2024-02-25"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(kableExtra)
+library(tidyverse)
+
+kbl_display <- function(df, box_width, box_height = NULL) {
+# This function uses the kableExtra package to display a dataframe (df).
+# In an HTML document, if the table exceeds the specified dimensions it will be shown in a scrollable box.
+#
+# Arguments:
+# box_width <chr>: Width of scroll box, in pixels (eg, "200 px") or percentage of total screen width (eg, "100%")
+# box_height <chr>: [Optional] Height of scroll box, in pixels or percentage
+  
+  if (!is.null(box_height)) {
+    df %>%
+      kbl() %>%
+      kable_material() %>%
+      scroll_box(width = box_width, height = box_height)
+  } else {
+    df %>%
+      kbl() %>%
+      kable_material() %>%
+      scroll_box(width = box_width)
+  }
+}
+```
+
+## Preface
+
+I experimented with the [kableExtra](https://cran.r-project.org/web/packages/kableExtra/vignettes/awesome_table_in_html.html) package to display the output of code blocks more nicely than the default, which limits the number of columns shown. If not already installed on your computer, you can run the command below.
+
+```{r install-kableExtra, eval=FALSE}
+install.packages("kableExtra")
+```
+
+## Introduction
+
+This assignment aims to explain how analyses of individual groups of data versus aggregated data can identify trends in opposite directions, a phenomenon in data analysis known as "Simpson's paradox."[^1]
+
+[^1]: Numbersense, Kaiser Fung, McGraw Hill, 2013. Available at CUNY library.
+
+## Data
+
+The original data table in the assignment instructions looks like this:
+
+![](https://github.com/alexandersimon1/Data607/blob/main/Assignment5/original_data_table.png?raw=true){width="400"}
+
+I created a corresponding CSV file from these data and saved it to my GitHub repository. For convenience, I substituted the city names with standard airport abbreviations (LAX = Los Angeles, PHX = Phoenix, SAN = San Diego, SFO = San Francisco, SEA = Seattle).
+
+```         
+Airline,Arrival_status,LAX,PHX,SAN,SFO,SEA
+Alaska,on time,497,221,212,503,1841
+Alaska,delayed,62,12,20,102,305
+AmWest,on time,694,4840,383,320,201
+AmWest,delayed,117,415,65,129,61
+```
+
+I read this file into a data frame (tibble).
+
+```{r read-data}
+(arrival_data_raw <- read_csv('https://media.githubusercontent.com/media/alexandersimon1/Data607/main/Assignment5/arrival_delays.csv', show_col_types = FALSE))
+```
+
+## Data transformations
+
+The raw data has both long and wide characteristics. It is "long" in the sense that each airline and arrival status has a separate record (row). But it is "wide" in the sense that each airport has a separate column. To tidy the data, I reshaped the data into two different wide formats. (I did this to make subsequent analyses easier.)
+
+**Wide format #1**. I consolidated the rows for each airline into a single row. I also reordered the columns so that all the "on time" columns and all the "delayed" columns were next to each other.
+
+```{r pivot-wide1}
+arrivals_by_airline <- arrival_data_raw %>% 
+    pivot_wider(
+      id_cols = Airline,
+      names_from = Arrival_status,
+      values_from = c(LAX, PHX, SAN, SFO, SEA)
+    ) %>%
+    select(Airline, ends_with("on time"), ends_with("delayed"))
+
+kbl_display(arrivals_by_airline, "100%")
+```
+
+<br>
+
+**Wide format #2**. The second wide format is a transposition of the first (ie, so the airports are rows and the airlines are columns). To do this, I first reshaped the data into an intermediate long format.
+
+```{r pivot-longer}
+intermediate_long_df <- arrivals_by_airline %>%
+    pivot_longer(
+      cols = -1, # Pivot all columns except the first
+      names_to = c("Airport", "Arrival_status"),
+      names_sep = "_",
+      values_to = "Arrivals"
+    )
+
+kbl_display(intermediate_long_df, "50%", "300px")
+```
+
+<br>
+
+Then I pivoted this into the second wide format.
+
+```{r pivot-wide2}
+arrivals_by_airport <- intermediate_long_df %>%
+    pivot_wider(
+      names_from = c(Airline, Arrival_status),
+      names_sep = "_",
+      values_from = Arrivals
+    )
+
+kbl_display(arrivals_by_airport, "75%")
+```
+
+<br>
+
+## Analysis
+
+I based my analysis on the comparisons that were described in the *Numbersense* book that was referenced in the data table.
+
+### 1. Comparison of arrival delays across all airports (aggregated data)
+
+This analysis uses wide format #1. I calculated the overall proportion of Alaska and AmWest arrivals that are delayed across all 5 airports.
+
+```{r aggregate-delays-calc}
+aggregate_delays <- arrivals_by_airline %>%
+    rowwise() %>%
+    mutate(
+      Total_delays = sum(c_across(LAX_delayed:SEA_delayed)),                          
+      Total_arrivals = sum(c_across(`LAX_on time`:SEA_delayed)),
+      Proportion_delays = round(Total_delays / Total_arrivals, digits = 3)
+      ) %>%
+    select(Airline, Total_delays, Total_arrivals, Proportion_delays)
+
+kbl_display(aggregate_delays, "60%")
+```
+
+<br>
+
+The barplot shows that a higher proportion of Alaska arrivals are delayed than AmWest arrivals across all 5 airports.
+
+```{r aggregate-delays-barplot}
+ggplot(aggregate_delays, aes(x = Airline, y = Proportion_delays, fill = Airline)) +
+  geom_bar(stat = "identity") + 
+  ylim(0, 0.15) +
+  xlab("Airline") +
+    theme(axis.title.x = element_text(face = "bold")) +
+  ylab("Proportion of arrivals delayed") +
+    theme(axis.title.y = element_text(face = "bold"))
+```
+
+<br>
+
+### 2. Comparison of arrival delays at individual airports
+
+This analysis uses wide format #2. I calculated the proportion of Alaska and AmWest arrivals that are delayed at each airport.
+
+```{r individual-delays-calc}
+arrivals_by_airport <- arrivals_by_airport %>%
+  mutate(
+    Alaska_total_arrivals = `Alaska_on time` + Alaska_delayed,
+    Alaska_proportion_delay = round(Alaska_delayed / Alaska_total_arrivals, digits = 3),
+    AmWest_total_arrivals = `AmWest_on time` + AmWest_delayed,
+    AmWest_proportion_delay = round(AmWest_delayed / AmWest_total_arrivals, digits = 3),
+  )
+
+individual_airport_delays <- arrivals_by_airport %>%
+  select(Airport, ends_with("_proportion_delay"))
+
+kbl_display(individual_airport_delays, "60%")
+```
+
+<br>
+
+To compare the results graphically, I wanted to create a side-by-side barplot, so I reshaped the data. The barplot shows that a higher proportion of AmWest arrivals are delayed than Alaska arrivals at each airport.
+
+```{r individual-delays-barplot}
+reshape_df_for_sbs_barplot <- function(df) {
+  reshaped_df <- df %>%
+    pivot_longer(
+      cols = -1, 
+      names_to = c("Airline", "Arrival_status"),
+      names_sep = "_proportion_",
+      values_to = "Proportion"
+    )
+  return(reshaped_df)
+}
+
+ggplot(reshape_df_for_sbs_barplot(individual_airport_delays), aes(x = Airport, y = Proportion, fill = Airline)) +
+  geom_col(position = 'dodge') +
+  xlab("Airport") +
+    theme(axis.title.x = element_text(face = "bold")) +
+  ylab("Proportion of arrivals delayed") +
+    theme(axis.title.y = element_text(face = "bold"))
+```
+
+Why did the first analysis show that AmWest has a lower proportion of arrival delays, but the second analysis of the same data shows that Alaska has a lower proportion? As explained in the *Numbersense* book, aggregated data may be confounded by "hidden" variables[^2] that influence individual data groups. For example, the 5 airports may differ by an unknown attribute that influences the proportion of Alaska and AmWest arrivals at each airport.
+
+[^2]: More accurately, "hidden" variables are unmeasured variables (ie, not in the dataset).
+
+The next two analyses examine this possibility.
+
+<br>
+
+### 3. Comparison of arrivals at each airport
+
+The proportion of Alaska and AmWest arrivals (on time + delayed) at each of the 5 airports is not balanced (ie, not a 1:1 ratio).
+
+```{r arrivals-by-airport-calc}
+arrivals_by_airport <- arrivals_by_airport %>%
+  mutate(
+    Total_arrivals = Alaska_total_arrivals + AmWest_total_arrivals,
+    Alaska_proportion_arrivals = round(Alaska_total_arrivals / Total_arrivals, digits = 3),    
+    AmWest_proportion_arrivals = round(AmWest_total_arrivals / Total_arrivals, digits = 3),
+  )
+
+individual_airport_arrivals <- arrivals_by_airport %>%
+  select(Airport, ends_with("_proportion_arrivals"))
+
+kbl_display(individual_airport_arrivals, "60%")
+```
+
+<br>
+
+The imbalance is most pronounced at PHX and SEA. At PHX, almost all arrivals are AmWest flights. In contrast, at SEA, most arrivals are Alaska flights.
+
+```{r arrivals-by-airport-barplot}
+ggplot(reshape_df_for_sbs_barplot(individual_airport_arrivals), aes(x = Airport, y = Proportion, fill = Airline)) +
+  geom_col(position = 'fill') +
+  xlab("Airport") +
+    theme(axis.title.x = element_text(face = "bold")) +
+  ylab("Proportion of arrivals") +
+    theme(axis.title.y = element_text(face = "bold"))
+```
+
+<br>
+
+### 4. Comparison of arrival delays at each airport
+
+Furthermore, the overall proportion of delayed arrivals (ie, for both airlines combined) is highest at SFO and lowest at PHX. SEA has the second highest proportion of delayed arrivals.
+
+```{r overall-airport-delays-calc}
+arrivals_by_airport <- arrivals_by_airport %>%
+  mutate(
+    Total_delays = Alaska_delayed + AmWest_delayed,
+    Overall_proportion_delayed = round(Total_delays / Total_arrivals, digits = 3),    
+  ) %>%
+  arrange(desc(Overall_proportion_delayed))
+
+individual_airport_delays <- arrivals_by_airport %>%
+  select(Airport, Overall_proportion_delayed)
+
+kbl_display(individual_airport_delays, "40%")
+```
+
+<br>
+
+```{r overall-airport-delays-barplot}
+ggplot(individual_airport_delays, aes(x = Airport, y = Overall_proportion_delayed, fill = Airport)) +
+  geom_col() + 
+  theme(legend.position = "none") +
+  ylim(0, 0.3) +
+  xlab("Airport") +
+    theme(axis.title.x = element_text(face = "bold")) +
+  ylab("Proportion of arrivals delayed") +
+    theme(axis.title.y = element_text(face = "bold"))
+```
+
+<br>
+
+## Explanation of Simpson's paradox
+
+Analyses #3 and #4 show that not all airports are equal with respect to arrival delay rates due to an unknown airport attribute. In the aggregate analysis, AmWest's arrival performance was boosted by the high proportion of its arrivals at PHX (analysis #3), which was the best-performing airport (analysis #4). In addition, Alaska's arrival performance was hurt by the high proportion of its arrivals at SEA, which was the second-worst performing airport. As a result, the aggregate comparison drowned out Alaska's low proportion of delayed arrivals at airports with a higher proportion of AmWest flights, making it appear that AmWest has better on-time performance.
+
+<br>
+
+## Conclusions
+
+These analyses demonstrate that the aggregate analysis leads to a misleading conclusion due to Simpson's paradox. Specifically, the aggregate analysis shows that AmWest has a lower overall proportion of arrival delays than Alaska, because a confounding airport variable affects the proportion of Alaska and AmWest arrivals at each airport. The individual airport analysis is not affected by this and more accurately shows that Alaska has a lower proportion of arrival delays than AmWest at each of the 5 airports.
