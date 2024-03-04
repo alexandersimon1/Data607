@@ -551,7 +551,7 @@ ggplot(no2_seasonal2,
 
 #### 4.4.1. Understanding "Geo Join ID"
 
-Since the raw dataset included names and geographic IDs of NYC neighborhoods, I wanted to see if I could map the air pollutant data to a map. I've never done this before and found it challenging to figure out. This was complicated by the fact that the NYC Open Data [website](https://data.cityofnewyork.us/Environment/Air-Quality/c3uy-2p5r/about_data) for the air pollutant data only vaguely describes "Geo Join ID" as "an identifier to join to mapping geography files to make thematic maps". As a beginner, I didn't know what that meant. Moreover, a Google search for the term "Geo Join ID" did not yield any useful results. However, after extensive research about how maps can be created in R,[^2] I figured out that "Geo Join ID" corresponds to NYC borough ID codes that are used to define geographic boundaries in the `nycgeo` R package.
+Since the raw dataset included names and geographic IDs of NYC neighborhoods, I wanted to see if I could map the air pollutant data to a map. I've never done this before and found it challenging to figure out. The explanation of the field on the NYC Open Data [website](https://data.cityofnewyork.us/Environment/Air-Quality/c3uy-2p5r/about_data) for the air pollutant data wasn't very helpful. It only vaguely describes "Geo Join ID" as "an identifier to join to mapping geography files to make thematic maps". As a beginner, I didn't know what that meant. Moreover, a Google search for the term "Geo Join ID" did not yield any useful results. However, after extensive research about how maps can be created in R,[^2] I figured out that "Geo Join ID" corresponds to NYC borough ID codes that are used to define geographic boundaries in the `nycgeo` R package.
 
 [^2]: Key websites that helped me create chloropleth maps of the air pollutant data:
 
@@ -619,9 +619,9 @@ In summer 2009, NO~2~ levels were highest in the Midtown area and lowest along t
 ```{r chloro-map-no2-summer2009}
 ggplot(nyc_cd_comb_no2_summer2009, aes(fill = NO2)) +
   geom_sf(color = NA) +
-  scale_fill_distiller(palette = "RdBu", direction = -1) +  
+  scale_fill_distiller(palette = "RdBu", direction = -1, name = "NO2 (ppb)") +  
   theme_void() +
-  ggtitle(bquote(bold(NO[2] * " levels in NYC neighborhoods in summer 2009")))
+  ggtitle(bquote(bold(NO[2] * " Levels in NYC Neighborhoods in Summer 2009")))
 ```
 
 In summer 2020, NO~2~ levels were highest around Carroll Gardens (Brooklyn) and lowest along the Long Beach Barrier Island and around Howard Beach.
@@ -631,9 +631,9 @@ Comparing the two maps shows that NO~2~ levels in the Midtown area decreased sub
 ```{r chloro-map-no2-summer2020}
 ggplot(nyc_cd_comb_no2_summer2020, aes(fill = NO2)) +
   geom_sf(color = NA) +
-  scale_fill_distiller(palette = "RdBu", direction = -1) +  
+  scale_fill_distiller(palette = "RdBu", direction = -1, name = "NO2 (ppb)") +  
   theme_void() +
-  ggtitle(bquote(bold(NO[2] * " levels in NYC neighborhoods in summer 2020")))
+  ggtitle(bquote(bold(NO[2] * " Levels in NYC Neighborhoods in Summer 2020")))
 ```
 
 <br>
