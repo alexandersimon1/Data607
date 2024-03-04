@@ -1,0 +1,614 @@
+---
+title: "DATA607 Project 2 Dataset 1"
+author: "Alexander Simon"
+date: "2024-03-03"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(kableExtra)
+library(tidyverse)
+
+kbl_display <- function(df, box_width, box_height = NULL) {
+# This function uses the kableExtra package to display a dataframe (df).
+# In an HTML document, if the table exceeds the specified dimensions it will be shown in a scrollable box.
+#
+# Arguments:
+# box_width <chr>: Width of scroll box, in pixels (eg, "200 px") or percentage of total screen width (eg, "100%")
+# box_height <chr>: [Optional] Height of scroll box, in pixels or percentage
+  
+  if (!is.null(box_height)) {
+    df %>%
+      kbl() %>%
+      kable_material() %>%
+      scroll_box(width = box_width, height = box_height)
+  } else {
+    df %>%
+      kbl() %>%
+      kable_material() %>%
+      scroll_box(width = box_width)
+  }
+}
+```
+
+<br>
+
+## 0. Packages
+
+I used the [kableExtra](https://cran.r-project.org/web/packages/kableExtra/vignettes/awesome_table_in_html.html) package to create tables. If needed, you can install it using the command below.
+
+```{r install-kableExtra, eval=FALSE}
+install.packages("kableExtra")
+```
+
+<br>
+
+## 1. Introduction
+
+For this analysis, I tidied and analyzed the dataset that I chose for Discussion 5. The dataset contains information about the cost of publishing open-access journal articles about medical research supported by the [UK Wellcome Trust](https://wellcome.org/grant-funding) foundation in 2012-2013. Unlike paywall articles, which require readers to pay for access, open-access publications are available "free" of charge. However, they are not actually free since publishers pass the cost to authors and, ultimately, to organizations that fund research.
+
+Here, I use the Wellcome Trust dataset to analyze how these costs vary among publishers and research fields.
+
+<br>
+
+## 2. Data
+
+### 2.1. Source
+
+<https://figshare.com/articles/dataset/Wellcome_Trust_APC_spend_2012_13_data_file/963054>
+
+The original data was in an Excel file, so I used Excel to export it as a CSV file, and then saved it to my GitHub repository.
+
+<br>
+
+### 2.2. Input
+
+I read the CSV file into a data frame (tibble).
+
+```{r read-data}
+publication_costs_raw <- read_csv('https://media.githubusercontent.com/media/alexandersimon1/Data607/main/Project2/Dataset1/publication_costs.csv', show_col_types = FALSE)
+
+kbl_display(publication_costs_raw, "100%", "500px")
+```
+
+<br>
+
+### 2.3. Dimensions
+
+The data frame has 2,128 rows (publications) and 5 columns (variables).
+
+```{r df-dimensions}
+dim(publication_costs_raw)
+```
+
+<br>
+
+## 3. Data checks and transformations
+
+### 3.1. Select columns
+
+Based on the column names, only three columns (Publisher, Journal title, and Cost) are relevant to the analysis, so I removed the other two. I also renamed the remaining columns to make them easier to work with.
+
+```{r select-columns}
+publication_costs <- publication_costs_raw %>%
+  select(publisher = Publisher,
+         journal = `Journal title`,
+         cost = `COST (£) charged to Wellcome (inc VAT when charged)`)
+```
+
+<br>
+
+### 3.2. Data types
+
+A glimpse of the data frame shows that all the variables are character data types.
+
+```{r data-types}
+glimpse(publication_costs)
+```
+
+To fix the cost variable, I removed the currency symbol (£) and commas and changed the data type to numeric.
+
+```{r tidy-cost-var}
+publication_costs <- publication_costs %>%
+  mutate(
+    cost = as.numeric(str_remove_all(cost, "[£,]"))
+  )
+```
+
+<br>
+
+### 3.3. Missing values
+
+There were a couple of null (NA) values in the dataframe.
+
+```{r check-na}
+map(publication_costs, ~ sum(is.na(.)))
+```
+
+I removed the rows with null values since they are not informative for the analysis.
+
+```{r remove-na1}
+publication_costs <- drop_na(publication_costs)
+```
+
+<br>
+
+### 3.4. Standardize publisher and journal names
+
+Next, I attempted to standardize the publisher names. Visual inspection of the data showed many inconsistencies with capitalization (eg, AIDS Care" and "aids Care") and use of abbreviations (eg, "OUP" and "Oxford University Press") as well as spelling errors and US/UK spelling differences. Cleaning this column was tedious and required going through the data manually to identify regex patterns. In some cases, I was not able to define a regex because some biomedical abbreviations have multiple translations (eg, "J BIOL" is the "JOURNAL OF BIOLOGY", but "J BIOL CHEM" is the "JOURNAL OF BIOLOGICAL CHEMISTRY").
+
+```{r standardize-publisher-names}
+publication_costs <- publication_costs %>%
+  mutate(
+    publisher = toupper(publisher),
+    # Misspelling and symbols
+    publisher = str_replace(publisher, "BIOLGY", "BIOLOGY"),
+    publisher = str_replace(publisher, "DARMOUTH", "DARTMOUTH"),
+    publisher = str_replace(publisher, "ENDOCRINOLOGY*", "ENDOCRINOLOGY"),
+    publisher = str_replace(publisher, "HAEMATOLOGY", "HEMATOLOGY"),
+    publisher = str_replace(publisher, " SOC ", " SOCIETY "),
+    publisher = str_replace(publisher, " (UNI|UNIV|UNIVESITY) ", " UNIVERSITY "),
+    publisher = str_replace(publisher, " FOR ", " OF "),
+    publisher = str_replace(publisher, "&", "AND"),
+    # Unnecessary leading/trailing words
+    publisher = str_remove(publisher, " \\(.*"), # delete anything in parentheses, eg acronyms,
+    publisher = str_remove(publisher, "^THE "),
+    publisher = str_remove(publisher, " PUBLICATIONS$"),
+    publisher = str_remove(publisher, " JOURNALS$"),
+    publisher = str_remove(publisher, " INC$"),
+    publisher = str_remove(publisher, " (LTD|LIMITED)$"),
+    # More commonly known as
+    publisher = str_replace(publisher, "BMJ.*", "BMJ"),
+    publisher = str_replace(publisher, "ELSEVIER.*", "ELSEVIER"),
+    publisher = str_replace(publisher, "^FEDERATION*", "WILEY"), # Wiley publishes FASEB J
+    publisher = str_replace(publisher, "FRONTIERS.*", "FRONTIERS"),
+    publisher = str_replace(publisher, "MIT PRESS.*", "MIT PRESS"),
+    publisher = str_replace(publisher, "COLD SPRING HARBOR.*", "COLD SPRING HARBOR"),
+    publisher = str_replace(publisher, "BIOLOGISTS?$", "BIOLOGISTS"),
+    publisher = str_replace(publisher, "LANDES BIOSCIENCES?", "LANDES BIOSCIENCE"),
+    publisher = str_replace(publisher, "^NATURE( PUBLISHING)?$", "NATURE PUBLISHING GROUP"),
+    publisher = str_replace(publisher, "SPRINGER.*", "SPRINGER"),
+    publisher = str_replace(publisher, ".*WILEY.*", "WILEY"),
+    publisher = str_replace(publisher, ".*JOVE.*", "JOVE"),
+    publisher = str_replace(publisher, "WOLTERS KLUWER.*", "WOLTERS KLUWER"),
+    publisher = str_replace(publisher, "BRITISH MEDICAL JOURNAL", "BMJ"),
+    publisher = str_replace(publisher, "^DARTMOUTH$", "DARTMOUTH JOURNAL SERVICES"),
+    publisher = str_replace(publisher, ".*NATIONAL ACADEMY OF SCIENCES.*", "NATIONAL ACADEMY OF SCIENCES"),
+    # Expand specific abbreviations
+    publisher = str_replace(publisher, "ACS", "AMERICAN CHEMICAL SOCIETY"),
+    publisher = str_replace(publisher, "(ASBMB|AMBSB)", "AMERICAN SOCIETY OF BIOCHEMISTRY AND MOLECULAR BIOLOGY"),
+    publisher = str_replace(publisher, "ASM", "AMERICAN SOCIETY OF MICROBIOLOGY"),
+    publisher = str_replace(publisher, "BMC", "BIOMED CENTRAL"),
+    publisher = str_replace(publisher, "(N|NATURE )PG", "NATURE PUBLISHING GROUP"),
+    publisher = str_replace(publisher, "^OUP$", "OXFORD UNIVERSITY PRESS"),
+    publisher = str_replace(publisher, "PLOS.*", "PUBLIC LIBRARY OF SCIENCE"),
+    publisher = str_replace(publisher, "PNAS", "NATIONAL ACADEMY OF SCIENCES"),
+    publisher = str_replace(publisher, "^Oxford$", "OXFORD UNIVERSITY PRESS"),
+    publisher = str_replace(publisher, "TandF", "TAYLOR AND FRANCIS")
+  )
+```
+
+The journal names had similar issues and also required manually identifying regex patterns or explicit substitutions.
+
+```{r standardize-journal-names}
+publication_costs <- publication_costs %>%
+  mutate(
+    journal = toupper(journal),
+    # Misspelling
+    journal = str_replace(journal, "AMERICAL", "AMERICAN"),    
+    journal = str_replace(journal, "BIINFORMATICS", "BIONFORMATICS"),
+    journal = str_replace(journal, "EPIGENTICS", "EPIGENETICS"),
+    journal = str_replace(journal, "(EXPERIEMENTS|EXPERMIMENTS)", "EXPERIMENTS"),
+    journal = str_replace(journal, "HEATH", "HEALTH"),    
+    journal = str_replace(journal, "HEPTOLOGY", "HEPATOLOGY"),
+    journal = str_replace(journal, "NEGECTED", "NEGLECTED"),    
+    journal = str_replace(journal, "OPTHALMOLOGY", "OPHTHALMOLOGY"),
+    journal = str_replace(journal, "OPTHALMOLOGICA", "OPHTHALMOLOGY"),    
+    journal = str_replace(journal, "PROCEDDINGS", "PROCEEDINGS"),    
+    # Leading/trailing
+    journal = str_remove(journal, "^THE "),
+    journal = str_remove(journal, "(ONLINE|PRINT)$"),
+    journal = str_remove(journal, "(-D)?-?\\d{2,4}[-.]\\d{4,}$"),
+    # Specific journals
+    journal = str_replace(journal, "ASN NEURO", "ASN NEUROCHEMISTRY"),   
+    journal = str_replace(journal, "BIOCHIMICA ET BIOPHYSICA ACTA.*", "BIOCHIMICA ET BIOPHYSICA ACTA"),
+    journal = str_replace(journal, "BLOOD.*", "BLOOD"),    
+    journal = str_replace(journal, ".*CELL REPORTS", "CELL REPORTS"),
+    journal = str_replace(journal, "J BIOL CHEM", "JOURNAL OF BIOLOGICAL CHEMISTRY"),    
+    journal = str_replace(journal, "JAIDS .*", "JAIDS"),
+    journal = str_replace(journal, "HEALTH DEVELOPMENT", "HEALTH & DEVELOPMENT"),    
+    journal = str_replace(journal, "NEUROSCIENCES", "NEUROSCIENCE"),    
+    journal = str_replace(journal, "PART C.*", "PART C"),    
+    journal = str_replace(journal, "(PONE|PLOSONE|PLOS 1|PUBLIC LIBRARY OF SCIENCE ONE)", "PLOS ONE"),
+    journal = str_replace(journal, "PLOS MEDICINE.*", "PLOS MEDICINE"),
+    journal = str_replace(journal, "(PNAS.*|PROC NATL.*|PROCEEDINGS OF THE NATIONAL.*)", 
+                                    "PROCEEDINGS OF THE NATIONAL ACADEMY OF SCIENCES (USA)"),    
+    journal = str_replace(journal, "(SCI REP|SCIENTIFIC REPORTS.*)", "SCIENTIFIC REPORTS"),
+    journal = str_replace(journal, "SECTION D, ", " SECTION D:"),
+    journal = str_replace(journal, ", SECTION D$", " SECTION D: BIOLOGICAL CRYSTALLOGRAPHY"),
+    journal = str_replace(journal, "ACTA (CRYSTALLOGRAPHY )?D$", 
+                                   "ACTA CRYSTALLOGRAPHICA SECTION D: BIOLOGICAL CRYSTALLOGRAPHY"),    
+    journal = str_replace(journal, "ACTA F", 
+                          "ACTA CRYSTALLOGRAPHICA SECTION F: STRUCTURAL BIOLOGY AND CRYSTALLIZATION COMMUNICATIONS"),
+    journal = str_replace(journal, "THORAX.*", "THORAX"),  
+    # Expand abbreviations
+    journal = str_replace(journal, "ANAL ", "ANALYTICAL "),
+    journal = str_replace(journal, "AM ", "AMERICAN "),    
+    journal = str_replace(journal, "ARCHIV$", "ARCHIVE"),  
+    journal = str_replace(journal, "(BEHAV |BEHAV$)", "BEHAVIOR"), 
+    journal = str_replace(journal, "BIOCHEM ", "BIOCHEMICAL "),     
+    journal = str_replace(journal, "BIOETH$", "BIOETHICS"),
+    journal = str_replace(journal, "(BIOL? |BIOL?$)", "BIOLOGY "),    
+    journal = str_replace(journal, "BIOTECHNOL ", "BIOTECHNOLOGY"),
+    journal = str_replace(journal, "BRT.", "BRITISH"),
+    journal = str_replace(journal, "CARDIOVASC ", "CARDIOVASCULAR "),    
+    journal = str_replace(journal, "(CHEM |CHEM$)", "CHEMISTRY"),     
+    journal = str_replace(journal, "CURR[ .]", "CURRENT "), 
+    journal = str_replace(journal, "DEV[ .]", "DEVELOPMENT "),
+    journal = str_replace(journal, "(DIS |DIS$)", "DISEASE"),    
+    journal = str_replace(journal, "EPIDEMIOL ", "EPIDEMIOLOGY"),
+    journal = str_replace(journal, "EUR ", "EUROPEAN "),    
+    journal = str_replace(journal, "HYG$", "HYGIENE"),
+    journal = str_replace(journal, "(IMMUNOL |IMMUNOL$)", "IMMUNOLOGY"),
+    journal = str_replace(journal, "INFECT ", "INFECTIOUS "),    
+    journal = str_replace(journal, "INT ", "INTERNATIONAL "),
+    journal = str_replace(journal, " J$", " JOURNAL"),
+    journal = str_replace(journal, "^J ", " JOURNAL OF "),
+    journal = str_replace(journal, "MAGN ", "MAGNETIC "),    
+    journal = str_replace(journal, "MED ", "MEDICINAL "),
+    journal = str_replace(journal, "MICROBIOL ", "MICROBIOLOGY"),    
+    journal = str_replace(journal, "MOL ", "MOLECULAR "),
+    journal = str_replace(journal, "NERV ", "NERVOUS "),    
+    journal = str_replace(journal, "NTD ", "NEGLECTED TROPICAL DISEASES"),    
+    journal = str_replace(journal, "NUTR ", "NUTRITION "),
+    journal = str_replace(journal, "ORG", "ORGANIC"),    
+    journal = str_replace(journal, "PARASIT ", "PARASITE "),
+    journal = str_replace(journal, "PATHOL$", "PATHOLOGY"),     
+    journal = str_replace(journal, "PHYSIOL ", "PHYSIOLOGY"),
+    journal = str_replace(journal, "RESON", "RESONANCE"),    
+    journal = str_replace(journal, "SCI ", "SCIENCE"),
+    journal = str_replace(journal, "SOC ", "SOCIETY "),
+    journal = str_replace(journal, "SYST", "SYSTEM"),    
+    journal = str_replace(journal, "TRANS ", "TRANSACTIONS "),
+    journal = str_replace(journal, "TROP ", "TROPICAL "),    
+    journal = str_replace(journal, "VET[ .]", "VETERINARY "),
+    journal = str_replace(journal, "VIROL$", "VIROLOGY"),
+    # Symbols
+    journal = str_replace_all(journal, ", ", "_ "),
+    journal = str_replace(journal, "&", "AND"),
+    journal = str_replace(journal, "::", ":"),    
+    journal = str_replace(journal, "  ", " "),
+    journal = str_replace(journal, "\\.$", "")    
+  )
+```
+
+> **Question**: Is there any way to condense the two previous code blocks?
+
+<br>
+
+#### 3.5. Duplicate rows
+
+The number of distinct rows was less than the total rows, so I removed the duplicates.
+
+```{r remove-dup-rows}
+sprintf("Total rows: %s", nrow(publication_costs))
+sprintf("Distinct rows: %s", nrow(distinct(publication_costs))) 
+publication_costs <- distinct(publication_costs)
+```
+
+<br>
+
+The (relatively) clean dataset looks like this:
+
+```{r tidy-data}
+kbl_display(publication_costs, "100%", "500px")
+```
+
+<br>
+
+## 4. Analysis
+
+### 4.1. Overall distribution of publication costs
+
+The distribution of publication costs is left-skewed with the majority of publication costs less than £2500. A small proportion of publication costs were between £2500 and £4000.
+
+```{r cost-histogram}
+bin_width <- 125
+ggplot(publication_costs, aes(x = cost)) +
+  geom_histogram(binwidth = bin_width, color = "black", fill = "steelblue", alpha = 0.2) + 
+  xlab("Publication cost (£)") + ylab("Count") +
+  theme(axis.title = element_text(face = "bold")) +
+  scale_x_continuous(breaks = seq(0, 6000, by = 500))
+```
+
+Similarly, a boxplot shows that most publication costs were within the interquartile range (IQR; £806 to £2867). Publication costs greater than approximately £4400 were outliers.
+
+```{r cost-boxplot}
+ggplot(publication_costs, aes(x = cost)) +
+  geom_boxplot() +
+  xlab("Publication cost (£)") +
+  theme(axis.title = element_text(face = "bold")) +
+  scale_x_continuous(breaks = seq(0, 6000, by = 500))
+```
+
+<br>
+
+### 4.2. Summary statistics
+
+The publication costs ranged from £45.94 to £6,000. The mean and median cost were similar (approximately £1,825).
+
+```{r cost-summary}
+format_price <- function(amount) {
+  price <- format(round(amount, 2), nsmall = 2)
+  return(price)
+}
+
+kbl_display(
+  publication_costs %>%
+  summarise(
+    min = format_price(min(cost)),
+    max = format_price(max(cost)),
+    mean = format_price(mean(cost)),
+    SD = format_price(sd(cost)),
+    median = format_price(median(cost)),
+    IQR = format_price(IQR(cost))
+  ), "100%")
+```
+
+<br>
+
+### 4.3. Which publishers publish the most journals?
+
+I determined this by grouping the data by publisher and counting the number of journals within each group. [Elsevier](https://www.elsevier.com/) is the largest publisher with 389 journals. Two other publishers, [Public Library of Science](https://plos.org/) (PLoS) and [Wiley](https://www.wiley.com/en-us), each publish \~250 journals.
+
+```{r publisher-journal-count}
+publishers <- publication_costs %>%
+  group_by(publisher) %>%
+  tally() %>%
+  arrange(desc(n))
+
+kbl_display(head(publishers, 10), "100%")
+```
+
+### 4.4. Which publishers are the most/least expensive?
+
+To determine the most expensive publisher, I extracted the publisher with the highest cost within each publisher group. Of note, Elsevier, which is the largest publisher, is also the second most expensive publisher.
+
+```{r most-expensive-publishers}
+most_expensive_publishers <- publication_costs %>%
+  group_by(publisher) %>%
+  slice_max(cost, n = 1, with_ties = FALSE) %>%
+  arrange(desc(cost)) %>%
+  select(publisher, cost)
+
+kbl_display(head(most_expensive_publishers, 10), "100%")
+```
+
+<br>
+
+Similarly, to determine the least expensive publishers, I extracted the publisher with the lowest cost within each publisher group. Of note, the Public Library of Science, which is the second-largest publisher, is the second least expensive publisher.
+
+```{r least-expensive-publishers}
+least_expensive_publishers <- publication_costs %>%
+  group_by(publisher) %>%
+  slice_min(cost, n = 1, with_ties = FALSE) %>%
+  arrange(cost) %>%
+  select(publisher, cost)
+
+kbl_display(head(least_expensive_publishers, 10), "100%")
+```
+
+<br>
+
+### 4.5. Which research fields are the most/least expensive to publish in?
+
+#### 4.5.1. Setup
+
+For this analysis, I defined a research field as a group of journals with related subjects and grouped the journals into categories based on keywords in their names.
+
+First, I defined keywords for each field.
+
+```{r field-keywords}
+aids <- "\\bAIDS\\b"
+aging <- c("\\bAGE\\b", "\\bAGING", "AGEING", "GERONTOLOGY", "GERIATRIC")
+archaeology <- "ARCHAEOLOG.*"
+behavior <- "BEHAVIOU?R"
+biology <- c(".*BIOL.*", "BIOS.*", "MICROSCOPY")
+biochemistry <- "BIOCHEM.*"
+biophysics <- c("BIOPHYS.*", "PHYSICS")
+biotechnology <- c("DEVICE.*", "ENGINEER.*", "MATERIAL.*", "NANO.*", "POLYMER.*",
+                   "ROBOTIC.*", ".*TECHNOL.*", "SENSOR.*")
+cancer <- c("CANCER", "CHEMO.*", "LEUKEMIA", "ONCO.*", "RADIAT.*")
+cardiology <- c("ATHERO.*", "CARDIO.*", "\\bHEART\\b", "STROKE")
+cell_biology <- c("CELL.*", "CYTO.*", "MEMBRANE", "NUCLEIC", "\\bRNA\\b", "SIGNAL.*")
+chemistry <- "CHEM.*"
+cardiology <- c("ATHEROSCLER.*", "CARDIO.*", "CIRCULAT.*", "HEART", "STROKE")
+computational_biology <- c("COMPUT.*", ".*INFORMATICS")
+dermatology <- "DERMATO.*"
+diagnostics <- c("IMAGING", "RADIO.*", "RESONANCE.*")
+ecology <- "ECOLOGY"
+endocrinology <- c("DIABET.*", "ENDOCRIN.*", "METABOL.*", "OBESITY")
+epidemiology <- "EPIDEMIOL.*"
+ethics <- ".*ETHIC.*"
+gastroenterology <- c("AlIMENT.*", "GASTROENTERO.*", "\\bGUT\\b", "HEPATO.*")
+genetics <- c(".*GENE.*", "CHROMOSOME", "DEFECT", "EVOLUTION", "MUTATION", "TRANSCRIPTION.*")
+general_medicine <- c("CHEST", "CLINIC.*", "HERNIA", "ILLNESS", "MEDIC.*", "TRANSPLANT.*")
+health <- "HEALTH"
+hematology <- c("BLOOD", "HA?EMATOL.*")
+history <- "HISTORY"
+immunology <- c("IMMUNOLOGY", "RHEUMAT.*", "ARTHRITIS")
+infectious_disease <- c("ANTIMICROBIAL", "BACTERI.*", "INFECT.*", "MALARIA", "NTD",
+                        "PARASIT.*", "PATHOGEN.*", "TICK.*", "TROPIC.*", "TUBERCULOSIS",
+                        "VACCINE")
+mathematics <- c("MATH.*", "STATISTIC.*")
+mental_health <- c("AFFECTIVE", "ALZHEIMER", "DEPRESSION", "EMOTION", "MENTAL", "MEMORY", "PSYCH.*",
+                   "SCHIZOPHRENIA", "SLEEP")
+multidisciplinary <- c("BMJ", "EMBO", "FASEB", "FEBS", "LANCET", "NATURE",
+                       "PLOS", "PROCEEDINGS", "SCIENCES", "SCIENTIFIC", "TRIALS")
+nephrology <- c("KIDNEY", "NEPHR.*", "\\bURO.*")
+neuroscience <- c("AUTISM", "BRAIN", "COGN.*", "CONSCIOUS.*", "CORTEX", "ELECTRO.*",
+                  "EPILES.*","GLIA", "HIPPOCAMPUS", "MOVEMENT", "NEUR.*", "PARKINSON",
+                  "PERCEPTION", "SEIZURE", "SYNAPSE")
+nutrition <- "NUTRITION"
+omics <- c("GENOM.*", "PROTEOM.*")
+ophthalmology <- c(".*OPHTHALMOL.*", "OPTIC.*", "PHOTO.*", "VISION")
+osteology <- c("BONE", "CALCIFIED", "ORTHO.*", "OSTEO.*")
+pathology <- c("DISEASE", "PATHOL.*")
+pharmacology <- "PHARM.*"
+physiology <- "PHYSIOL.*"
+pediatrics <- c("CHILD.*", "DEVELOPMENT", "PA?EDIATRIC.*")
+pulmonology <- "RESPIRAT.*"
+reproduction <- "REPRODUCT.*"
+sociology <- c("ANTHROPOL.*", "ETHNOL.*", "SOCI.*")
+structural_biology <- c("CRYSTAL.*", "NMR", "SPECTROMETRY", "PROTEIN")
+substance_abuse <- c("ADDICTION", "ALCOHOL", "DRUG", "NICOTINE")
+veterinary_science <- c("ANIMAL", "VETERINARY")
+virology <- "VIR[AOU].*"
+```
+
+Then I assigned a field to each journal in the publication cost dataframe.
+
+```{r group-journals-by-field}
+journal_in_field <- function(field, journal_names) {
+# This function determines whether journals (variable in publication cost dataframe) belong to (ie, contain) a specified field. Fields are defined by subject keywords/regex patterns (see previous code block). The function returns a logical vector.
+  
+  result <- grepl(paste(field, collapse = "|"), journal_names)
+  return(result)
+}
+
+publication_costs <- publication_costs %>%
+  mutate(
+    field = case_when(
+      journal_in_field(aging, journal) ~ "Aging",
+      journal_in_field(aids, journal) ~ "AIDS",
+      journal_in_field(archaeology, journal) ~ "Archaeology", 
+      journal_in_field(behavior, journal) ~ "Behavior",
+      journal_in_field(biology, journal) & !journal_in_field(structural_biology, journal) ~ "Biology",
+      journal_in_field(biochemistry, journal) ~ "Biochemistry",
+      journal_in_field(biophysics, journal) ~ "Biophysics",
+      journal_in_field(biotechnology, journal) ~ "Biotechnology",
+      journal_in_field(cancer, journal) ~ "Cancer",
+      journal_in_field(cardiology, journal) ~ "Cardiology",
+      journal_in_field(cell_biology, journal) ~ "Cell_biology",
+      journal_in_field(chemistry, journal) ~ "Chemistry",
+      journal_in_field(computational_biology, journal) ~ "Computational_biology",
+      journal_in_field(dermatology, journal) ~ "Dermatology",
+      journal_in_field(diagnostics, journal) ~ "Diagnostics",
+      journal_in_field(ecology, journal) ~ "Ecology",
+      journal_in_field(endocrinology, journal) ~ "Endocrinology",
+      journal_in_field(epidemiology, journal) ~ "Epidemiology",
+      journal_in_field(ethics, journal) ~ "Ethics",
+      journal_in_field(gastroenterology, journal) ~ "Gastroenterology",
+      journal_in_field(genetics, journal) ~ "Genetics",
+      journal_in_field(general_medicine, journal) ~ "General_medicine",
+      journal_in_field(health, journal) ~ "Health",
+      journal_in_field(hematology, journal) ~ "Hematology",
+      journal_in_field(history, journal) ~ "History",
+      journal_in_field(immunology, journal) ~ "Immunology",
+      journal_in_field(infectious_disease, journal) ~ "Infectious_disease",
+      journal_in_field(mathematics, journal) ~ "Mathematics",
+      journal_in_field(mental_health, journal) ~ "Mental_health",
+      journal_in_field(multidisciplinary, journal) ~ "Multidisciplinary",
+      journal_in_field(nephrology, journal) ~ "Nephrology",
+      journal_in_field(neuroscience, journal) ~ "Neuroscience",
+      journal_in_field(nutrition, journal) ~ "Nutrition",
+      journal_in_field(omics, journal) ~ "Omics",
+      journal_in_field(ophthalmology, journal) ~ "Ophthalmology",
+      journal_in_field(osteology, journal) ~ "Osteology",
+      journal_in_field(pathology, journal) ~ "Pathology",
+      journal_in_field(pediatrics, journal) ~ "Pediatrics",
+      journal_in_field(pharmacology, journal) ~ "Pharmacology",
+      journal_in_field(physiology, journal) ~ "Physiology",
+      journal_in_field(pulmonology, journal) ~ "Pulmonology",
+      journal_in_field(reproduction, journal) ~ "Reproductive",
+      journal_in_field(sociology, journal) ~ "Sociology",
+      journal_in_field(structural_biology, journal) ~ "Structural_biology",
+      journal_in_field(substance_abuse, journal) ~ "Substance_abuse",
+      journal_in_field(veterinary_science, journal) ~ "Veterinary_science",
+      journal_in_field(virology, journal) ~ "Virology",
+      .default = NULL
+      ),
+    .before = cost
+  )
+```
+
+> **Question**: Is there any way to condense all these function calls?
+
+<br>
+
+Due to limitations in the standardization of journal names as noted above, not all journals in the publication cost dataframe could be mapped to a corresponding field. Because of this, I removed the rows with null values from the data frame.
+
+```{r remove-na2}
+publication_costs <- drop_na(publication_costs, field)
+kbl_display(publication_costs, "100%", "500px")
+```
+
+<br>
+
+#### 4.5.2. Distribution of publication costs by field of research
+
+The distribution of publication costs varied by field of research. The median publication cost of individual fields appears to be about £2000; however, the IQR varies (eg, multidisciplinary vs immunology).
+
+```{r pub-cost-by-field, fig.width=8, fig.height=10}
+publication_costs %>%
+  group_by(field) %>%
+  ggplot(aes(x = cost, group = field, color = field)) +
+  geom_boxplot() +
+    labs(x = "Publication cost (£)") +
+    theme(axis.title = element_text(face = "bold"), 
+          axis.text.y = element_blank(),
+          axis.ticks.y = element_blank(),
+          strip.text.x = element_text(size = 8)) +
+    scale_x_continuous(breaks = seq(0, 6000, by = 1000)) +  
+  facet_wrap(~ field, ncol = 4) +
+    theme(legend.position = "none")
+```
+
+<br>
+
+#### 4.5.3. Most/least expensive fields to publish in
+
+To reduce the impact of outlier values, I assessed the most and least expensive fields to publish in by median publication cost in each field. There did not seem to be any relationship among the most expensive fields. Mathematics had the highest median publication cost, followed by ecology, behavior, and pharmacology.
+
+```{r most-expensive-fields}
+most_expensive_fields <- publication_costs %>%
+  group_by(field) %>%
+  summarise(
+    median_cost = round(median(cost), 2)
+  ) %>%
+  arrange(desc(median_cost))
+
+kbl_display(head(most_expensive_fields, 10), "50%")
+```
+
+<br>
+
+Biophysics and structural biology were the least expensive fields to publish in. Multidisciplinary journals, which had the third lowest cost, may have low publication costs to attract researchers from diverse fields. None of the other fields seemed particularly related.
+
+```{r least-expensive-fields}
+least_expensive_fields <- publication_costs %>%
+  group_by(field) %>%
+  summarise(
+    median_cost = round(median(cost), 2)
+  ) %>%
+  arrange(median_cost)
+
+kbl_display(head(least_expensive_fields, 10), "50%")
+```
+
+<br>
+
+### 5. Limitations/shortcomings
+
+-   Due to the messiness of this dataset, I was not able to completely tidy it.
+
+-   The method that I used to map journals to research fields does not account for journal names that match multiple fields. One approach to resolving these cases could be to treat journal names hierarchically. For example, for a journal named "Journal of Child Psychiatry", "psychiatry" would be a sub-field of "child", so the research field would be based on "child" (ie, pediatrics). However, this was complicated to implement and didn't work in the time I had available.
+
+<br>
+
+### 6. Conclusions
+
+These analyses showed that open-access publication costs vary widely among publishers and that medical publishing is dominated by a few large publishers, such as Elsevier (expensive) and PLoS (less expensive). There did not seem to be any relationship among the most expensive fields to publish open-access articles in, but multidisciplinary journals were among the least expensive. These insights may inform researchers and their funders, such as the UK Wellcome Trust, about which publishers and research fields are most cost effective for communicating biomedical research.
+
+Since this dataset is more than 10 years old, it would be interesting to compare it with more recent data to assess how publication costs have changed over time. Additional data, such as journal [impact factors](https://clarivate.com/webofsciencegroup/essays/impact-factor/) (a measure of how many times a publication has been cited by other publications), could be included to determine whether publication costs affect the impact factor of publications.
