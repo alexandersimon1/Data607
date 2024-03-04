@@ -1,0 +1,529 @@
+---
+title: "DATA607 Project 2 Dataset 2"
+author: "Alexander Simon"
+date: "2024-03-03"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(hexbin)
+library(kableExtra)
+library(tidyverse)
+
+kbl_display <- function(df, box_width, box_height = NULL) {
+# This function uses the kableExtra package to display a dataframe (df).
+# In an HTML document, if the table exceeds the specified dimensions it will be shown in a scrollable box.
+#
+# Arguments:
+# box_width <chr>: Width of scroll box, in pixels (eg, "200 px") or percentage of total screen width (eg, "100%")
+# box_height <chr>: [Optional] Height of scroll box, in pixels or percentage
+  
+  if (!is.null(box_height)) {
+    df %>%
+      kbl() %>%
+      kable_material() %>%
+      scroll_box(width = box_width, height = box_height)
+  } else {
+    df %>%
+      kbl() %>%
+      kable_material() %>%
+      scroll_box(width = box_width)
+  }
+}
+```
+
+<br>
+
+## 0. Packages
+
+I used the [kableExtra](https://cran.r-project.org/web/packages/kableExtra/vignettes/awesome_table_in_html.html) package to create tables and the [hexbin](https://cran.r-project.org/web/packages/hexbin/index.html) package to perform hexagonal binning (explained in section [4.2.2. Correlations]). If needed, you can install them using the commands below.
+
+```{r install-packages, eval=FALSE}
+install.packages("kableExtra")
+install.packages("hexbin")
+```
+
+<br>
+
+## 1. Introduction
+
+[FIFA21](https://www.ea.com/games/fifa/compete/fgs-21) is a football simulation video game. Here, I analyze Lucas Weyrich's dataset of FIFA21 player statistics to determine the total wage expenses per club (team) and other interesting insights.
+
+<br>
+
+## 2. Data
+
+### 2.1. Source
+
+I saved the CSV file from Lucas' discussion post on Blackboard and then uploaded it to my GitHub repository.
+
+### 2.2. Input
+
+I read the CSV file into a dataframe (tibble). Due to the size of the dataframe, only the first 100 rows are shown.
+
+```{r read-data}
+fifa21_data_raw <- read_csv('https://media.githubusercontent.com/media/alexandersimon1/Data607/main/Project2/Dataset2/fifa21_raw_data.csv', show_col_types = FALSE)
+kbl_display(head(fifa21_data_raw, 100), "100%", "500px")
+```
+
+<br>
+
+### 2.3. Dimensions
+
+The data frame has 18,979 rows (game players) and 77 columns (variables).
+
+```{r df-dimensions}
+dim(fifa21_data_raw)
+```
+
+<br>
+
+## 3. Data checks and transformations
+
+### 3.1. Select columns
+
+I selected the most important data columns needed to perform exploratory data analysis and answer Lucas' question. I also renamed columns to make them easier to work with.
+
+```{r select-columns}
+fifa21_data <- fifa21_data_raw %>%
+  select(
+    Nationality,
+    Name, 
+    Age,
+    Team_contract = `Team & Contract`,
+    ID, 
+    Height, 
+    Weight, 
+    Foot = foot, 
+    Joined, 
+    Wage, 
+    Skill)
+```
+
+<br>
+
+### 3.2. Data types
+
+A glimpse of the data frame shows that Height, Weight, and Wage need to be converted to numeric format and Joined needs to be converted to date format. Name and Team_contract contain multiple variables and need to be separated into components.
+
+```{r data-types}
+glimpse(fifa21_data)
+```
+
+<br>
+
+### 3.3. Tidy variables
+
+#### 3.3.1. Name
+
+Rather than design a regex to extract the players' last names, I found it easier to remove the leading and trailing parts of player names.
+
+```{r tidy-player-names}
+fifa21_data <- fifa21_data %>%
+  mutate(
+    Last_name = str_remove(Name, " (Jr|Sr)$"),
+    Last_name = str_remove(Last_name, "^.* ")
+  )
+```
+
+#### 3.3.2. Team name and contract dates
+
+Some team names are accompanied by contract years while other are not. I separated the cases by checking for the presence of the date range symbol (\~), and then either extracted the team name or stripped the whitespace around the team name. For players with contracts, I extracted the starting and ending years as numeric values.
+
+```{r tidy-team-contract}
+fifa21_data <- fifa21_data %>%
+  mutate(
+    Team = if_else(grepl("~", Team_contract), 
+                   str_extract(Team_contract, "(?<=\n{4}).*(?=\n)"), str_trim(Team_contract)),
+    Year_start = if_else(grepl("~", Team_contract),
+                         as.numeric(str_extract(Team_contract, "(?<=\n)\\d{4}(?= ~)")), NA),
+    Year_end = if_else(grepl("~", Team_contract),
+                         as.numeric(str_extract(Team_contract, "(?<=~ )\\d{4}(?=\n{2})")), NA)    
+  )
+```
+
+#### 3.3.3. Height
+
+I extracted the number of feet and inches, and then converted the height to inches.
+
+```{r tidy-height}
+fifa21_data <- fifa21_data %>%
+  mutate(
+    Height_ft = as.numeric(str_extract(Height, "\\d(?=')")),
+    Height_in = as.numeric(str_extract(Height, "(?<=')\\d")),
+    Height_total_in = (Height_ft * 12) + Height_in
+  )
+```
+
+#### 3.3.4. Weight
+
+Similarly, I extracted the weight without the unit (lbs).
+
+```{r tidy-weight}
+fifa21_data <- fifa21_data %>%
+  mutate(
+    Weight_lb = as.numeric(str_extract(Weight, "\\d+(?=lbs)"))
+  )
+```
+
+#### 3.3.5. Date joined
+
+I converted this field to YYYY-MM-DD date format.
+
+```{r tidy-dates}
+fifa21_data <- fifa21_data %>%
+  mutate(
+    Join_year = str_extract(Joined, "(?<=,\\s)\\d{4}"),
+    Join_day = str_extract(Joined, "(?<=\\s)\\d{1,2}(?=,)"),
+    Join_month = str_extract(Joined, "[[:alpha:]]{3}(?=\\s)"),
+    Join_month_as_number = case_when(
+      Join_month == "Jan" ~ 1,
+      Join_month == "Feb" ~ 2,
+      Join_month == "Mar" ~ 3,
+      Join_month == "Apr" ~ 4,
+      Join_month == "May" ~ 5,
+      Join_month == "Jun" ~ 6,
+      Join_month == "Jul" ~ 7,
+      Join_month == "Aug" ~ 8,
+      Join_month == "Sep" ~ 9,
+      Join_month == "Oct" ~ 10,
+      Join_month == "Nov" ~ 11,
+      Join_month == "Dec" ~ 12,
+      .default = NA
+    ),
+    Join_date = ymd(paste(Join_year, Join_month_as_number, Join_day, sep = "-"))
+  )
+```
+
+#### 3.3.6. Length of time with team
+
+Since the dataset only specifies the year for contract start and end dates, I could only calculate the number of years that players were with a team. For players without contract dates, I assigned NA.
+
+```{r calc-time-with-club}
+fifa21_data <- fifa21_data %>%
+  mutate(
+    Years_with_team = if_else(!is.na(Year_start) & !is.na(Year_end), Year_end - Year_start + 1, NA)
+  )
+```
+
+#### 3.3.7. Wage
+
+I extracted the numeric portion of the wage and converted it to numeric format. If a multiplier (K) was present, I calculated the actual wage.
+
+```{r tidy-wage}
+fifa21_data <- fifa21_data %>%
+  mutate(
+    Wage_short = as.numeric(str_extract(Wage, "(?<=€)\\d+")),
+    Wage_long = if_else(grepl("K", Wage), Wage_short * 1000, Wage_short)
+  )
+```
+
+#### 3.3.8. Clean up
+
+```{r clean-up}
+fifa21_data <- fifa21_data %>%
+  select(ID, 
+         Name = Last_name, 
+         Nationality, 
+         Age, 
+         Height_in = Height_total_in, 
+         Weight_lb, 
+         Foot, 
+         Team, 
+         Join_date,
+         Years_with_team,
+         Wage_euro = Wage_long, 
+         Skill)
+```
+
+<br>
+
+### 3.4. Duplicate rows
+
+There was 1 duplicate row, so I removed it.
+
+```{r remove-dup-rows}
+sprintf("Total rows: %s", nrow(fifa21_data))
+sprintf("Distinct rows: %s", nrow(distinct(fifa21_data)))        
+fifa21_data <- distinct(fifa21_data)
+```
+
+<br>
+
+### 3.5. Missing values
+
+There were no null (NA) values in any columns except Years_with_team, due to the players without contracts.
+
+```{r check-na}
+map(fifa21_data, ~ sum(is.na(.)))
+```
+
+Because of this, I limited my analyses to players who had contracts. The first 100 rows of the tidied dataframe is shown below.
+
+```{r players-with-contracts}
+players_with_contracts <- drop_na(fifa21_data, Years_with_team)
+kbl_display(head(players_with_contracts, 100), "100%", "500px")
+```
+
+<br>
+
+## 4. Analysis
+
+### 4.1. Categorical variables
+
+#### 4.1.1. Nationality
+
+I examined the number of players from different countries in the dataset. England and Germany have the most players, with more than 1000 each.
+
+```{r count-country-players}
+kbl_display(
+player_nationalities <- players_with_contracts %>%
+  group_by(Nationality) %>%
+  summarise(Number_of_players = n()) %>%
+  arrange(desc(Number_of_players)) %>%
+  rename(region = Nationality),
+  "50%", "500px")
+```
+
+<br>
+
+I wanted to visualize the data on a map. To do this,[^1] I first generated a world map data and renamed a few countries to align with the nomenclature in the FIFA21 dataset.
+
+[^1]: This website was helpful: <https://sarahpenir.github.io/r/making-maps/>
+
+```{r map-nationalities}
+mapdata <- map_data("world")
+mapdata <- mapdata %>%
+  mutate(
+    region = str_replace(region, "UK", "England"),
+    region = str_replace(region, "USA", "United States"),
+    region = str_replace(region, "South Korea", "Korea Republic"),
+    region = str_replace(region, "North Korea", "Korea DPR"),
+    region = str_replace(region, "Democratic Republic of the Congo", "DR Congo"),
+    region = str_replace(region, "Republic of Congo", "Congo"),
+    region = str_replace(region, "China", "China PR"),
+    region = str_replace(region, "Taiwan", "Chinese Taipei")    
+  )
+```
+
+Next, I joined the map data with the player nationality data.
+
+```{r combine-map-data}
+map_players <- left_join(mapdata, player_nationalities, by = "region")
+```
+
+The map shows that England has the most players, followed by western Europe, Brazil, and Argentina. Relatively few players are from Africa, eastern Europe (including Russia), and southeast Asia. No players are from India.
+
+```{r map-player-nationalities, fig.width=8}
+ggplot(map_players, aes(x = long, y = lat, group=group)) +
+  coord_fixed(1.3) +
+  geom_polygon(aes(fill = Number_of_players)) +
+  scale_fill_distiller(palette = "RdBu", direction = -1) +
+  theme_void()
+```
+
+<br>
+
+#### 4.1.2. Foot
+
+Approximately three-quarters of the players are right-footed.
+
+```{r barplot-feet}
+kbl_display(
+  players_with_contracts %>%
+  group_by(Foot) %>%
+  summarise(Number_of_players = n()) %>%
+  mutate(Proportion = round(Number_of_players / sum(Number_of_players), 3)) %>%
+  arrange(desc(Number_of_players)),
+  "50%")
+```
+
+<br>
+
+### 4.2. Quantitative variables
+
+The data frame below summarizes the summary statistics of 6 variables.
+
+-   **Age**: Player ages range from 16 to 53 years. The average age is 25 years.
+
+-   **Height**: Player heights range from 61 to 81 inches (5' 1" to 6' 9"). The mean height is 69 inches (5' 9").
+
+-   **Weight**: Player weights range 110 to 243 lbs. The mean weight is 165 lbs.
+
+-   **Length of time with team**: The length of time players were with a team range from 0 to 23 years. On average, players stay with a team 3.74 years (median 3 years).
+
+-   **Wage**: Wages range from €500 to €560,000. The mean is €8941 and the median is €3000.
+
+-   **Skill**: Skill levels range from 40 to 470. The mean and median are similar (approximately 260).
+
+```{r summary-stats}
+summary_stats <- players_with_contracts %>%
+  summarise(across(
+    .cols = c("Age", "Height_in", "Weight_lb", "Years_with_team", "Wage_euro", "Skill"),
+    .fns = list(
+      min = ~ min(.x),
+      max = ~ max(.x),
+      mean = ~ round(mean(.x), 2),
+      SD = ~ round(sd(.x), 2),
+      median = ~ median(.x),
+      IQR = ~ IQR(.x)
+    ),
+    .names = "{col}-{fn}"
+  ))
+
+# Transpose results
+intermediate_long_df <- summary_stats %>%
+  pivot_longer(
+    cols = everything(),
+    names_to = c("variable", "fn"),
+    names_sep = "-",
+    values_to = "stat"
+  )
+
+summary_stats_transposed <- intermediate_long_df %>%
+  pivot_wider(
+    names_from = "fn",
+    values_from = "stat"
+  )
+
+kbl_display(summary_stats_transposed, "100%")
+```
+
+### 4.2.1. Distributions
+
+#### 4.2.1.1. Length of time with team
+
+A histogram shows that most players are with their team for 1-5 years.
+
+```{r team-duration-histogram}
+bin_width <- 1
+ggplot(players_with_contracts, aes(x = Years_with_team)) +
+  geom_histogram(binwidth = bin_width, color = "black", fill = "steelblue", alpha = 0.2) + 
+  xlab("Length of time with team (years)") + ylab("Count") +
+  theme(axis.title = element_text(face = "bold")) +
+  scale_x_continuous(breaks = seq(0, 25, by = 5))
+```
+
+<br>
+
+#### 4.2.1.2. Wages
+
+Due to the wide range of wages (ie, several orders of magnitude), I examined the distribution of $log_{10}(Wage)$. The distribution shows that wages have discrete values between approximately €1000 ($10^3$) and €6000 ($10^{3.8}$) and that wages in this range are the most common in the dataset.
+
+```{r wage-histogram}
+bin_width <- 0.01
+ggplot(players_with_contracts, aes(x = log10(Wage_euro))) +
+  geom_histogram(binwidth = bin_width, color = "black", fill = "steelblue", alpha = 0.2) +
+  ylim (0, 3000) +
+  ylab("Count") +
+    theme(axis.title.y = element_text(face = "bold")) +
+  xlab(bquote(bold(log[10](Wage)))) +
+# I had a little difficulty customizing the axes with a log scale. A Stack Overflow webpage
+# suggested using scale_x/y_continuous with a "log plus one" (log1p) transformation.
+# https://stackoverflow.com/questions/24646594/how-to-improve-the-aspect-of-ggplot-histograms-with-log-scales-and-discrete-valu
+# expand is a vector that specifies the offset of data points from an axis (https://ggplot2.tidyverse.org/reference/expansion.html)  
+  scale_x_continuous(breaks=c(2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6), trans = "log1p", expand = c(0, 0.025))
+```
+
+<br>
+
+#### 4.2.1.3. Teams with highest total wage expenses
+
+The top two teams, Real Madrid and FC Barcelona, each spend more than €4,000,000 on player wages. Most of the top 10 teams appear to be European.
+
+```{r wages-by-team}
+kbl_display(
+  players_with_contracts %>%
+  group_by(Team) %>%
+  summarise(Total_wage = sum(Wage_euro)) %>%
+  arrange(desc(Total_wage)) %>%
+  head(10),
+  "50%")
+```
+
+<br>
+
+#### 4.2.1.3. Skill levels
+
+The distribution of skill levels is bimodal with a large proportion of players around a peak skill of 260 to 300 and a smaller proportion of less-skilled players around a peak of \~80.
+
+```{r skill-histogram}
+bin_width <- 10
+ggplot(players_with_contracts, aes(x = Skill)) +
+  geom_histogram(binwidth = bin_width, color = "black", fill = "steelblue", alpha = 0.2) + 
+  xlab("Skill level") + ylab("Count") +
+  theme(axis.title = element_text(face = "bold")) +
+  scale_x_continuous(breaks = seq(0, 500, by = 50))
+```
+
+<br>
+
+### 4.2.2. Correlations
+
+#### 4.2.2.1. Wage versus skill level
+
+Due to the number of data points (nearly 19,000), a scatterplot is overplotted and nearly impossible to interpret. To improve the visualization, I created a [hexagonal heatmap](https://ggplot2.tidyverse.org/reference/geom_hex.html), which bins data points into hexagons and then maps the fill color to the number of data points in each hexagon. In the plot below, the bright red hexagons show that players most often earn about €2500 ($10^{3.4}$) and have a skill level between 200 to 300.
+
+```{r wage-skill-scatterplot}
+ggplot(players_with_contracts, aes(x = Skill, y = log10(Wage_euro))) +
+  stat_binhex(bins = 50) +
+  scale_fill_gradient(low = "lightblue", high = "red", limits = c(0, 250)) +
+  xlab("Skill level") +
+    theme(axis.title.x = element_text(face = "bold")) +
+  ylab(bquote(bold(log[10](Wage))))
+```
+
+<br>
+
+#### 4.2.2.2. Skill level versus length of time with a team
+
+This plot shows that players are most often with a team for 3-5 years and have a skill level between 200 to 300.
+
+Interestingly, as the number of years that players have been with a team increases beyond 8 years,[^2] the divergence between more skilled and less skilled players widens (purple arrows). This suggests that players stay with a team a long time either because they are very good (and probably well paid) or because they have not been able to improve (and would find it difficult to switch to another team).
+
+[^2]: The starting point of the divergence differs a little between the scatterplot (8 years) and hexbin heatmap (9 years). The latter is slightly different due to the binning process.
+
+```{r skill-team-duration-scatterplot}
+ggplot(players_with_contracts, aes(x = Years_with_team, y = Skill)) +
+  stat_binhex(bins = 50) +
+  scale_fill_gradient(low = "lightblue", high = "red", limits = c(0, 250)) +  
+  geom_segment(aes(x = 9, y = 150, xend = 20, yend = 275),
+               arrow = arrow(length = unit(0.25, "cm")),
+               linewidth = 0.5, linetype = "dashed", color = "purple") +
+  geom_segment(aes(x = 9, y = 150, xend = 20, yend = 100),
+               arrow = arrow(length = unit(0.25, "cm")),
+               linewidth = 0.5, linetype = "dashed", color = "purple") +
+  xlab("Number of years with team") +
+  ylab("Skill level") +
+  theme(axis.title = element_text(face = "bold"))
+```
+
+<br>
+
+#### 4.2.2.3. Wage versus length of time with a team
+
+This plot shows that players most often earn about €2500 ($10^{3.4}$) and have been with a team for 3-4 years.
+
+```{r wage-team-duration-scatterplot}
+ggplot(players_with_contracts, aes(x = Years_with_team, y = log10(Wage_euro))) +
+  stat_binhex(bins = 50) +
+  scale_fill_gradient(low = "lightblue", high = "red", limits = c(0, 800)) +    
+  xlab("Number of years with team") +
+    theme(axis.title.x = element_text(face = "bold")) +
+  ylab(bquote(bold(log[10](Wage))))
+```
+
+<br>
+
+### 4.2.3. Analysis of covariance
+
+I didn't analyze wage versus time with a team with skill as a covariate because I haven't learned how to do this yet.
+
+<br>
+
+### 5. Conclusions
+
+I cleaned and tidied the FIFA21 dataset and performed some exploratory data analyses. I answered Lucas' question about team expenses for player wages and showed that Real Madrid has the highest wage expenditure. Pairwise correlations of wage, skill, and length of time with team showed that players most often earn about €2500 ($10^{3.4}$), have a skill level between 200 to 300, and stay with a team for 3-5 years.
+
+In my opinion, the most interesting finding from this dataset was the increasing divergence between more skilled and less skilled players among those who are with a team for longer than 8 years. This appears to be the threshold for players to either improve their skills or remain stagnant.
