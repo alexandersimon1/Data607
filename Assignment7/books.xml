@@ -24,7 +24,7 @@
         <author>Robert Waldinger, M.D.</author>
         <author>Marc Schulz, Ph.D.</author>         
         <publish_date>2023-01-10</publish_date>
-        <publisher>Simon &amp Schuster</publisher>
+        <publisher>Simon <![CDATA[&]]> Schuster</publisher>
         <price>20.49</price>        
     </book>    
 </catalog>
