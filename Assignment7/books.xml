@@ -1,0 +1,30 @@
+<catalog>
+    <book id="book1">
+        <title lang="en">Joy of Cooking</title>        
+        <author>Irma S. Rombauer</author>
+        <author>Marion Rombauer Becker</author>
+        <author>Ethan Becker</author>
+        <author>John Becker</author>
+        <author>Megan Scott</author>                
+        <publish_date>2019-11-12</publish_date>
+        <publisher>Scribner</publisher>
+        <price>21.99</price>        
+    </book>
+    <book id="book2">
+        <title lang="en">The Art and Science of Foodpairing: 10,000 flavour matches that will transform the way you eat</title>        
+        <author>Peter Couquyt</author>
+        <author>Bernard Lahousse</author>
+        <author>Johan Langenbick</author>               
+        <publish_date>2020-09-10</publish_date>
+        <publisher>Firefly Books</publisher>
+        <price>30.99</price>        
+    </book>
+    <book id="book3">
+        <title lang="en">The Good Life: Lessons from the World's Longest Scientific Study of Happiness</title>        
+        <author>Robert Waldinger, M.D.</author>
+        <author>Marc Schulz, Ph.D.</author>         
+        <publish_date>2023-01-10</publish_date>
+        <publisher>Simon & Schuster</publisher>
+        <price>20.49</price>        
+    </book>    
+</catalog>
