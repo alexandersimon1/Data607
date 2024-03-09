@@ -1,0 +1,243 @@
+---
+title: "DATA607 Assignment 7"
+author: "Alexander Simon"
+date: "2024-03-09"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(httr2)
+library(jsonlite)
+library(kableExtra)
+library(rvest)
+library(tidyverse)
+library(xml2)
+library(xmltools)
+
+kbl_display <- function(df, box_width, box_height = NULL) {
+# This function uses the kableExtra package to display a dataframe (df).
+# In an HTML document, if the table exceeds the specified dimensions it will be shown in a scrollable box.
+#
+# Arguments:
+# box_width <chr>: Width of scroll box, in pixels (eg, "200 px") or percentage of total screen width (eg, "100%")
+# box_height <chr>: [Optional] Height of scroll box, in pixels or percentage
+  
+  if (!is.null(box_height)) {
+    df %>%
+      kbl() %>%
+      kable_material() %>%
+      scroll_box(width = box_width, height = box_height)
+  } else {
+    df %>%
+      kbl() %>%
+      kable_material() %>%
+      scroll_box(width = box_width)
+  }
+}
+```
+
+<br>
+
+## 0. Packages
+
+I used the [jsonlite](https://cran.r-project.org/web/packages/jsonlite/index.html) package to work with JSON files and the [httr2](https://httr2.r-lib.org/), [rvest](https://cran.r-project.org/web/packages/rvest/index.html), [xml2](https://cran.r-project.org/web/packages/XML/index.html), and [xmltools](https://github.com/dantonnoriega/xmltools) packages to work with XML and HTML files. I also used the [kableExtra](https://cran.r-project.org/web/packages/kableExtra/vignettes/awesome_table_in_html.html) package to create tables. If needed, you can install them using the commands below.
+
+```{r install-packages, eval=FALSE}
+install.packages("httr2")
+install.packages("jsonlite")
+install.packages("kableExtra")
+install.packages("rvest")
+install.packages("xml2")
+devtools::install_github('ultinomics/xmltools')
+```
+
+<br>
+
+## 1. Introduction
+
+The goals of this assignment were to import JSON, XML, and HTML files of the same information about 3 books into dataframes and test whether they are identical. The information included the books' title, authors, publication date, publisher, and the price on Amazon as of the date of this assignment.
+
+<br>
+
+## 2. Data files
+
+I manually created JSON, XML, and HTML files about the 3 books using the Visual Studio code editor, which provided helpful syntax highlighting for each file type. I also used [JSON](https://jsonlint.com/), [XML](https://xmllint.com/), and [HTML](https://jsonformatter.org/html-validator) linters to validate my files.
+
+I saved these files to my GitHub repository.
+
+<br>
+
+## 3. Data import
+
+HTML
+
+```{r import-html}
+books_html <- read_html("https://raw.githubusercontent.com/alexandersimon1/Data607/main/Assignment7/books.html")
+```
+
+XML
+
+```{r import-xml}
+books_xml <- read_xml("https://raw.githubusercontent.com/alexandersimon1/Data607/main/Assignment7/books.xml")
+```
+
+JSON
+
+```{r import-json}
+books_json <- fromJSON("https://raw.githubusercontent.com/alexandersimon1/Data607/main/Assignment7/books.json", flatten = TRUE)
+```
+
+<br>
+
+## 4. Data transformation
+
+### 4.1. HTML
+
+I started with the HTML table since there is a function in the `rvest` package to do the dataframe conversion.
+
+```{r create-df-from-html}
+books_html_df <- html_table(books_html)[[1]]
+```
+
+The data types and content appear correct.
+
+```{r glimpse-html-df}
+glimpse(books_html_df)
+```
+
+```{r view-html-df}
+kbl_display(books_html_df, "100%")
+```
+
+<br>
+
+I used this dataframe as a first-pass comparator for the XML and JSON dataframes.
+
+<br>
+
+### 4.2. XML
+
+I used the [`xmltools`](https://github.com/dantonnoriega/xmltools) package to convert the XML object to a dataframe. The code below is adapted from the package readme file.
+
+The first step is to identify the "terminal parent", which is the parent node that does not have any children.
+
+```{r identify-terminal-parent}
+terminal_parent <- books_xml %>%
+  xml_get_paths(only_terminal_parent = TRUE)
+```
+
+Second, determine the terminal XPATHs (XML path query language to extract nodes).
+
+```{r get-xpath}
+terminal_xpaths <- terminal_parent %>%
+  unlist() %>%
+  unique()
+```
+
+Then use the terminal XPATHs to extract the data. Finally, bind the rows and columns into a dataframe.
+
+```{r create-xml-df, message = FALSE}
+terminal_nodesets <- lapply(terminal_xpaths, xml2::xml_find_all, x = books_xml)
+books_xml_df <- terminal_nodesets %>%
+  purrr::map(xml_dig_df) %>% 
+  purrr::map(dplyr::bind_rows) %>%
+  dplyr::bind_cols()
+```
+
+A glimpse of the resulting dataframe shows that the authors are in individual columns and the price is a character data type rather than numeric.
+
+```{r glimpse-xml-df1}
+glimpse(books_xml_df)
+```
+
+So I combined the author columns and coerced the price column to be numeric.
+
+```{r combine-cols}
+books_xml_df <- books_xml_df %>%
+  unite(author, contains("author"), sep = ", ", na.rm = TRUE)
+```
+
+```{r coerce-price-numeric}
+books_xml_df <- books_xml_df %>%
+  mutate(
+    price = as.numeric(price)    
+  )
+```
+
+Now the dataframe looks better.
+
+```{r glimpse-xml-df2}
+glimpse(books_xml_df)
+```
+
+```{r view-xml-df}
+kbl_display(books_xml_df, "100%")
+```
+
+<br>
+
+### 4.3. JSON
+
+The input object is a list of lists.
+
+```{r json-structure}
+str(books_json)
+```
+
+First, I binded the columns into a dataframe.
+
+```{r list-to-df}
+books_json_df <- bind_cols(books_json[[1]])
+```
+
+Then I converted each author list to a string. I use `ungroup()` at the end because `rowwise()` groups by row. (I realized this when comparing dataframes in section 4.4.)
+
+```{r stringify-author-list}
+books_json_df <- books_json_df %>%
+  rowwise() %>%
+  mutate(
+    author = toString(unlist(author)),
+  ) %>%
+  ungroup()
+```
+
+Now the dataframe looks better.
+
+```{r glimpse-json-df}
+glimpse(books_json_df)
+```
+
+```{r view-json-df}
+kbl_display(books_json_df, "100%")
+```
+
+<br>
+
+### 4.4. Compare dataframes
+
+Pairwise comparisons using `all.equal` showed that all 3 dataframes are identical.
+
+JSON dataframe vs HTML dataframe
+
+```{r json-vs-html}
+all.equal(books_json_df, books_html_df)
+```
+
+XML dataframe vs HTML dataframe
+
+```{r xml-vs-html}
+all.equal(books_xml_df, books_html_df)
+```
+
+JSON dataframe vs XML dataframe
+
+```{r json-vs-xml}
+all.equal(books_json_df, books_xml_df)
+```
+
+<br>
+
+## 5. Conclusions
+
+I successfully imported JSON, XML, and HTML versions of the same data into dataframes. All 3 dataframes were identical.
