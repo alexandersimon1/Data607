@@ -240,4 +240,4 @@ all.equal(books_json_df, books_xml_df)
 
 ## 5. Conclusions
 
-I successfully imported JSON, XML, and HTML versions of the same data into dataframes. All 3 dataframes were identical.
+I successfully imported JSON, XML, and HTML versions of the same information into dataframes. All 3 dataframes were identical.
