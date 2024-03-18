@@ -1,0 +1,225 @@
+---
+title: "DATA607 TidyVerse CREATE Assignment"
+author: "Alexander Simon"
+date: "2024-03-17"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(kableExtra)
+
+kbl_display <- function(df, box_width, box_height = NULL) {
+# This function uses the kableExtra package to display a dataframe (df).
+# In an HTML document, if the table exceeds the specified dimensions it will be shown in a scrollable box.
+#
+# Arguments:
+# box_width <chr>: Width of scroll box, in pixels (eg, "200 px") or percentage of total screen width (eg, "100%")
+# box_height <chr>: [Optional] Height of scroll box, in pixels or percentage
+  
+  if (!is.null(box_height)) {
+    df %>%
+      kbl() %>%
+      kable_material() %>%
+      scroll_box(width = box_width, height = box_height)
+  } else {
+    df %>%
+      kbl() %>%
+      kable_material() %>%
+      scroll_box(width = box_width)
+  }
+}
+```
+
+## Introduction
+
+[Tidyverse](https://cran.r-project.org/web/packages/tidyverse/vignettes/paper.html) is a collection of R packages that provide useful functions for common tasks in data science, including data import, tidying, manipulation, visualization, and programming.
+
+![](https://github.com/alexandersimon1/Data607/blob/main/Tidyverse%20CREATE/tidyverse_overview.png?raw=true){width="50%"}
+
+Packages for each of these tasks include:
+
+-   Import: [readr](https://readr.tidyverse.org/) for reading files in various formats
+
+-   Tidy: [tidyr](https://tidyr.tidyverse.org/) for tidying data
+
+-   Transformation: [dplyr](https://dplyr.tidyverse.org/) and its related packages (eg, [stringr](stringr) for strings, [forcats](https://forcats.tidyverse.org/) for factors, [lubridate](lubridate) for date and time)
+
+-   Visualization: [ggplot2](https://ggplot2.tidyverse.org/) for plots
+
+-   Programming: [tibble](https://tibble.tidyverse.org/) for tibbles, [magrittr](https://magrittr.tidyverse.org/) for the `%>%` pipe operator
+
+Here, I demonstrate how to use the `across()` function from the `dplyr` package with a Kaggle [dataset](https://www.kaggle.com/datasets/cristaliss/ryanair-reviews-ratings) of airline passenger reviews of Ryanair, a low-cost airline in Europe.
+
+<br>
+
+## Data
+
+Data were [downloaded](https://www.kaggle.com/datasets/cristaliss/ryanair-reviews-ratings) from Kaggle as a CSV file, pushed to a GitHub repository, and then read in.
+
+```{r read-data, message=FALSE}
+ryanair_reviews_raw <- read_csv('https://media.githubusercontent.com/media/alexandersimon1/Data607/main/Tidyverse%20CREATE/ryanair_reviews.csv', show_col_types = FALSE)
+```
+
+```{r glimpse-raw-data, include=FALSE}
+glimpse(ryanair_reviews_raw)
+```
+
+```{r tidy-data, include=FALSE}
+# Basic tidying
+# Rename columns and select informative columns
+ryanair_reviews <- ryanair_reviews_raw %>%
+  select(Date_publish = `Date Published`, 
+         Comment_title = `Comment title`, 
+         Comment, 
+         Rating_seat_comfort = `Seat Comfort`,
+         Rating_service_cabin = `Cabin Staff Service`, 
+         Rating_food = `Food & Beverages`, 
+         Rating_service_ground = `Ground Service`, 
+         Rating_entertainment = `Inflight Entertainment`, 
+         Rating_wifi = `Wifi & Connectivity`, 
+         Rating_value = `Value For Money`, 
+         Rating_overall = `Overall Rating`, 
+         Recommended, 
+         Flight_date = `Date Flown`, 
+         Origin, Destination, Aircraft, 
+         Traveler_type = `Type Of Traveller`,
+         Seat_type = `Seat Type`, 
+         Trip_verified)
+```
+
+This is what the data look like:[^1]
+
+[^1]: Data tidying isn't shown because it isn't the focus of the vignette. Please see the R markdown file.
+
+```{r glimpse-data}
+glimpse(ryanair_reviews)
+```
+
+<br>
+
+## What is the purpose of [across()](https://dplyr.tidyverse.org/reference/across.html)?
+
+R is optimized for operations over columns. `across()` simplifies the application of a function to mulitple columns. Although `across()` can be implemented in other ways, using it results in cleaner, more concise, and more scalable code.
+
+<br>
+
+## Usage
+
+`across(.cols, .fns, ..., .names = NULL, .unpack = FALSE)`
+
+Arguments:
+
+-   `.cols` - The columns of the dataframe to transform. Columns can be specified explicitly or by a range (eg, `c(x:z)` for columns 'x', 'y', and 'z')
+
+-   `.fns` - The function(s) to be applied to each column specified in `.cols`
+
+-   `.names` - Rule(s) to customize the names of new columns resulting from the functions specified in `.fns`
+
+-   `.unpack` - Expand compressed columns when TRUE. See tidyr documentation for `pack()` and `unpack()` for more information
+
+<br>
+
+## Examples
+
+### Example 1. Calculate the mean rating of each rating category
+
+*Without across() - A separate command is needed for each rating. The code is repetitive, hard to read, and prone to errors (eg, typos).*
+
+```{r mean-ratings-without-across}
+kbl_display(
+ryanair_reviews %>%
+  summarise(
+    Rating_seat_comfort_mean = round(mean(Rating_seat_comfort, na.rm = TRUE), 2),
+    Rating_service_cabin_mean = round(mean(Rating_service_cabin, na.rm = TRUE), 2),
+    Rating_food_mean = round(mean(Rating_food, na.rm = TRUE), 2),
+    Rating_service_ground_mean = round(mean(Rating_service_ground, na.rm = TRUE), 2),    
+    Rating_entertainment_mean = round(mean(Rating_entertainment, na.rm = TRUE), 2),
+    Rating_wifi_mean = round(mean(Rating_wifi, na.rm = TRUE), 2),
+    Rating_value_mean = round(mean(Rating_value, na.rm = TRUE), 2),
+    Rating_overall_mean = round(mean(Rating_overall, na.rm = TRUE), 2)
+  ), "100%", "75%"
+)
+```
+
+<br>
+
+*With across() - The code is much simpler, regardless of the number of columns.*
+
+```{r mean-ratings-with-across}
+kbl_display(
+ryanair_reviews %>%
+  summarise(
+    across(
+      .cols = starts_with("Rating"),
+      .fns = ~ round(mean(.x, na.rm = TRUE), 2),  # ".x" is a placeholder for the column
+      .names = "{col}_mean"  # append "_mean" to each column name
+    )
+  ), "100%", "75%"
+)
+```
+
+<br>
+
+### Example 2. Determine the minimum and maximum rating of each rating category
+
+The `.fns` argument of `across()` can have mulitple functions.
+
+*Without across() - Again, the code block is long and repetitive.*
+
+```{r min-max-ratings-without-across}
+kbl_display(
+ryanair_reviews %>%
+  summarise(
+    Rating_seat_comfort_min = min(Rating_seat_comfort, na.rm = TRUE),
+    Rating_seat_comfort_max = max(Rating_seat_comfort, na.rm = TRUE),    
+    Rating_service_cabin_min = min(Rating_service_cabin, na.rm = TRUE),
+    Rating_service_cabin_max = max(Rating_service_cabin, na.rm = TRUE),    
+    Rating_food_min = min(Rating_food, na.rm = TRUE),
+    Rating_food_max = max(Rating_food, na.rm = TRUE),    
+    Rating_service_ground_min = min(Rating_service_ground, na.rm = TRUE),
+    Rating_service_ground_max = max(Rating_service_ground, na.rm = TRUE),    
+    Rating_entertainment_min = min(Rating_entertainment, na.rm = TRUE),
+    Rating_entertainment_max = max(Rating_entertainment, na.rm = TRUE),    
+    Rating_wifi_min = min(Rating_wifi, na.rm = TRUE),
+    Rating_wifi_max = max(Rating_wifi, na.rm = TRUE),    
+    Rating_value_min = min(Rating_value, na.rm = TRUE),
+    Rating_value_max = max(Rating_value, na.rm = TRUE),    
+    Rating_overall_min = min(Rating_overall, na.rm = TRUE),
+    Rating_overall_max = max(Rating_overall, na.rm = TRUE)   
+  ), "100%", "75%"
+)
+```
+
+<br>
+
+*With across() - The code is much simpler and easily scalable to more columns and/or functions.*
+
+```{r min-max-ratings-with-across}
+kbl_display(
+ryanair_reviews %>%
+  summarise(
+    across(
+      .cols = starts_with("Rating"),
+      .fns = list(min = ~ min(.x, na.rm = TRUE), 
+                  max = ~ max(.x, na.rm = TRUE)),
+      .names = "{col}_{fn}"  # append function name ({fn}) to each column name
+    )
+  ), "100%", "75%"
+)
+```
+
+<br>
+
+## Summary
+
+Although there are alternative approaches to coding the examples above, `across()` is an attractive function for creating scalable and easy-to-read code to transform multiple columns in a dataframe.
+
+<br>
+
+## References
+
+"Apply a function (or functions) across multiple columns" <https://dplyr.tidyverse.org/reference/across.html>
+
+"Column-wise operations in dplyr" <https://www.r4epi.com/column-wise-operations-in-dplyr>
