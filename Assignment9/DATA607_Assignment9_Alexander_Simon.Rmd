@@ -13,7 +13,7 @@ library(jsonlite)
 
 ## 1. Introduction
 
-The New York Times offers [APIs](https://developer.nytimes.com/) to get news articles programmatically. Here, I demonstrate the use of the [Top Stories API](https://developer.nytimes.com/docs/top-stories-product/1/overview) to retrieve articles that are on the homepage of the newspaper.
+The New York Times offers [APIs](https://developer.nytimes.com/) to get news articles programmatically. Here, I demonstrate the use of the [Top Stories API](https://developer.nytimes.com/docs/top-stories-product/1/overview) to retrieve articles that are on the homepage of the newspaper and convert the data to a dataframe.
 
 <br>
 
