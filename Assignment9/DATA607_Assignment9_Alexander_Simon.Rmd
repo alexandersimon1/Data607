@@ -87,24 +87,36 @@ top_stories <- top_stories %>%
 
 ### 3.3. Rename columns
 
-The date columns would be clearer if time was also indicated in the column name. I also renamed the "url" and "uri" columns since they were hard to tell apart.
+I renamed the following columns for clarity:
+
+-   Date-time columns include time in the column name
+
+-   Differentiate "url" (Uniform Resource Locator = website address) and "uri" (Uniform Resource identifier), which are hard to tell apart by the lowercase acronym
+
+-   Use more descriptive names for the "facet" columns[^2]
+
+[^2]: <https://open.nytimes.com/article-search-api-enhancements-3ec5bbc25f0c>
 
 ```{r rename-cols}
 top_stories <- top_stories %>%
   rename(web_url = url) %>%
-  rename(resource_locator = uri) %>%
+  rename(resource_identifier = uri) %>%
   rename(updated_datetime = updated_date) %>%
   rename(created_datetime = created_date) %>%  
-  rename(published_datetime = published_date)
+  rename(published_datetime = published_date) %>%
+  rename(terms_descriptive_subject = des_facet) %>%
+  rename(terms_organization = org_facet) %>%
+  rename(terms_person = per_facet) %>%
+  rename(terms_geographic_area = geo_facet)
 ```
 
 ### 3.4. Unnest and unpack "multimedia" column
 
 I debated how to handle the "multimedia" column, which is a list of dataframes. According to tidy data principles, it should be unnested longer, but the resulting dataframe is less readable (ie, because each row (top story) is repeated several times for each multimedia type. I wonder if the multimedia column could be left as a more compact dataframe if it isn't important for a data analysis.
 
-However, for the purpose of this assignment, I went ahead and unnested it. This led me to discover that the `unpack` function is also needed because tibbles are unnested as [2D columns](#0).[^2] The `keep_empty = TRUE` is to prevent dropping rows for null elements.
+However, for the purpose of this assignment, I went ahead and unnested it. This led me to discover that the `unpack` function is also needed because tibbles are unnested as [2D columns](#0).[^3] The `keep_empty = TRUE` is to prevent dropping rows for null elements.
 
-[^2]: <https://stackoverflow.com/questions/62328384/unnest-longer-gives-dollar-sign-instead-of-normal-tibble>
+[^3]: <https://stackoverflow.com/questions/62328384/unnest-longer-gives-dollar-sign-instead-of-normal-tibble>
 
 ```{r unnest-multimedia}
 top_stories <- top_stories %>%
@@ -114,9 +126,9 @@ top_stories <- top_stories %>%
 
 ### 3.5. Missing values
 
-Finally, I filled missing values with NAs. This was a little tricky until I realized that `na_if` only works with character vectors.[^3]
+Finally, I filled missing values with NAs. This was a little tricky until I realized that `na_if` only works with character vectors.[^4]
 
-[^3]: <https://stackoverflow.com/questions/51449243/how-to-replace-empty-string-with-na-in-r-dataframe>
+[^4]: <https://stackoverflow.com/questions/51449243/how-to-replace-empty-string-with-na-in-r-dataframe>
 
 ```{r fill-na}
 top_stories <- top_stories %>%
