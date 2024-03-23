@@ -1,0 +1,140 @@
+---
+title: "DATA607 Assignment 9"
+author: "Alexander Simon"
+date: "2024-03-23"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(jsonlite)
+```
+
+## 1. Introduction
+
+The New York Times offers [APIs](https://developer.nytimes.com/) to get news articles programmatically. Here, I demonstrate the use of the [Top Stories API](https://developer.nytimes.com/docs/top-stories-product/1/overview) to retrieve articles that are on the homepage of the newspaper.
+
+<br>
+
+## 2. Data
+
+I created an account to get an API key but don't show it because RPubs is public. The key is included in the call to the API.
+
+```{r create-request-url}
+api_key <- rstudioapi::askForPassword("API Key")
+url <- paste("https://api.nytimes.com/svc/topstories/v2/home.json?api-key=", api_key, sep = "") 
+```
+
+The API returns data in JSON format so I used `fromJSON()`
+
+```{r get-data}
+top_stories <- fromJSON(url, flatten = TRUE)
+```
+
+Note that the retrieved data may change from run to run as the top stories are likely updated frequently.
+
+<br>
+
+## 3. Data checks and transformations
+
+The structure of the JSON data can be seen in a data viewer.
+
+```{r JSON-data-structure}
+View(top_stories)
+```
+
+The top stories are in level 1, element 6 ("results"), which is already a dataframe, so I started the data transformations from there.
+
+### 3.1. Convert "facet" columns
+
+The "\_facet" columns are character lists, so I unlisted and converted them to strings.
+
+```{r unlist-facets}
+top_stories <- top_stories[[6]] %>%
+  rowwise() %>%
+  mutate(
+    des_facet = toString(unlist(des_facet)),
+    org_facet = toString(unlist(org_facet)),
+    per_facet = toString(unlist(per_facet)),
+    geo_facet = toString(unlist(geo_facet))
+  ) %>%
+  ungroup()
+```
+
+Now the dataframe looks like this:
+
+```{r glimpse-df1}
+glimpse(top_stories)
+```
+
+### 3.2. Convert "date" columns
+
+The date-times in the "date" columns appear to be in ISO8601 format as described in *R for Data Science*, 2nd edition, [chapter 17](https://r4ds.hadley.nz/datetimes), such that the date and time components are separated by a "T". I also noticed that all times end with "-04:00", which is the difference between Eastern Daylight Time and UTC (Coordinated Universal Time).[^1]
+
+[^1]: <https://en.wikipedia.org/wiki/UTC%E2%88%9204:00>
+
+So converting these columns to datetime format is straightforward:
+
+```{r convert-date-times}
+top_stories <- top_stories %>%
+  mutate (
+    updated_date = as_datetime(updated_date),
+    created_date = as_datetime(created_date),
+    published_date = as_datetime(published_date),    
+  )
+```
+
+### 3.3. Rename columns
+
+The date columns would be clearer if time was also indicated in the column name. I also renamed the "url" and "uri" columns since they were hard to tell apart.
+
+```{r rename-cols}
+top_stories <- top_stories %>%
+  rename(web_url = url) %>%
+  rename(resource_locator = uri) %>%
+  rename(updated_datetime = updated_date) %>%
+  rename(created_datetime = created_date) %>%  
+  rename(published_datetime = published_date)
+```
+
+### 3.4. Unnest and unpack "multimedia" column
+
+I debated how to handle the "multimedia" column, which is a list of dataframes. According to tidy data principles, it should be unnested longer, but the resulting dataframe is less readable (ie, because each row (top story) is repeated several times for each multimedia type. I wonder if the multimedia column could be left as a more compact dataframe if it isn't important for a data analysis.
+
+However, for the purpose of this assignment, I went ahead and unnested it. This led me to discover that the `unpack` function is also needed because tibbles are unnested as [2D columns](#0).[^2] The `keep_empty = TRUE` is to prevent dropping rows for null elements.
+
+[^2]: <https://stackoverflow.com/questions/62328384/unnest-longer-gives-dollar-sign-instead-of-normal-tibble>
+
+```{r unnest-multimedia}
+top_stories <- top_stories %>%
+  unnest_longer(multimedia, keep_empty = TRUE) %>%
+  unpack(cols = multimedia, names_sep = "_")  
+```
+
+### 3.5. Missing values
+
+Finally, I filled missing values with NAs. This was a little tricky until I realized that `na_if` only works with character vectors.[^3]
+
+[^3]: <https://stackoverflow.com/questions/51449243/how-to-replace-empty-string-with-na-in-r-dataframe>
+
+```{r fill-na}
+top_stories <- top_stories %>%
+  mutate(
+    across(
+      where(is.character), ~ na_if(., "")
+    )
+  )
+```
+
+Now the dataframe looks better and is ready for analysis (not part of this assignment).
+
+```{r glimpse-df2}
+glimpse(top_stories)
+```
+
+<br>
+
+## 4. Conclusion
+
+I successfully retrieved New York Times top stories using its API and transformed the JSON data into an R dataframe, which could be used for subsequent data analysis.
