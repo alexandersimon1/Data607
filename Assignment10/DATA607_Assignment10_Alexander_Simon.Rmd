@@ -1,0 +1,1022 @@
+---
+title: "DATA607 Assignment 10"
+author: "Alexander Simon"
+date: "2024-03-31"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(janeaustenr)
+library(textdata)
+library(tidytext)
+library(tidyverse)
+library(readtext)
+library(reshape2)
+library(SentimentAnalysis)
+library(wordcloud)
+library(RColorBrewer)
+library(jsonlite)
+library(maps)
+library(plotly)
+```
+
+<br>
+
+## 0. Packages
+
+In addition to the packages used in the textbook portion of this assignment, I used the [SentimentAnalysis](https://cran.r-project.org/web/packages/SentimentAnalysis/), [RColorBrewer](https://cran.r-project.org/web/packages/RColorBrewer/index.html), [maps](https://cran.r-project.org/web/packages/maps/index.html), and [plotly](https://cran.r-project.org/web/packages/plotly/index.html) packages. If needed, you can install them using the command(s) below.
+
+```{r install-packages, eval=FALSE}
+install.packages("SentimentAnalysis")
+install.packages("RColorBrewer")
+install.packages("maps")
+install.packages("plotly")
+```
+
+<br>
+
+## 1. Introduction
+
+Sentiment analysis is a technique to understand the attitudes and opinions from text. In this assignment, I first implement the base code described in *Text Mining with R*, chapter 2. Then I extend these methods to analyze Yelp customer reviews using the 3 sentiment lexicons from chapter 2 (AFINN, Bing, and NRC) along with a psychosocial sentiment lexicon called the General Inquirer (see [3.3. GI sentiment lexicon] for details). Finally, I combined the customer reviews with Yelp business location data and explored how geospatial analysis could be used with sentiment analysis to inform business decisions.
+
+<br>
+
+## 2. Implementing the base code
+
+### 2.1. Data
+
+Get AFINN sentiment lexicon[^1]
+
+[^1]: Finn Årup Nielsen. A new ANEW: Evaluation of a word list for sentiment analysis in microblogs. *Proceedings of the ESWC2011 Workshop on 'Making Sense of Microposts': Big things come in small packages 718 in CEUR Workshop Proceedings* 93-98. 2011 May. <http://arxiv.org/abs/1103.2903>.
+
+```{r get-sentiments-afinn, message = FALSE}
+get_sentiments("afinn")
+```
+
+<br>
+
+Get Bing sentiment lexicon[^2]
+
+[^2]: Minqing Hu and Bing Liu. Mining and summarizing customer reviews. *Proceedings of the ACM SIGKDD International Conference on Knowledge Discovery & Data Mining (KDD-2004)*, Seattle, Washington, USA, Aug 22-25, 2004. <https://www.cs.uic.edu/~liub/publications/kdd04-revSummary.pdf>
+
+```{r get-sentiments-bing, message = FALSE}
+get_sentiments("bing")
+```
+
+<br>
+
+Get NRC sentiment lexicon[^3]
+
+[^3]: Saif Mohammad and Peter Turney, Crowdsourcing a Word-Emotion Association Lexicon. *Computational Intelligence,* 29 (3), 436-465, 2013. <https://arxiv.org/pdf/1308.6297.pdf>
+
+```{r get-sentiments-nrc, message = FALSE}
+get_sentiments("nrc")
+```
+
+<br>
+
+### 2.2. Analysis
+
+#### 2.2.1. Joyful words in *Emma*
+
+First, tidy the text
+
+```{r tidy-emma}
+tidy_books <- austen_books() %>% 
+  group_by(book) %>%
+  mutate(
+    linenumber = row_number (),
+    chapter = cumsum (str_detect (text, regex("^chapter [\\divxlc]", ignore_case = TRUE)))
+  ) %>%
+  ungroup() %>% 
+  unnest_tokens(word, text)
+```
+
+Filter the text needed for sentiment analysis—the joyful words in the NRC lexicon and the books for text from Emma. From these, determine the most common joyful words in *Emma*.
+
+```{r emma-most-common-joyful-words, message = FALSE}
+nrc_joy <- get_sentiments ("nrc") %>% 
+  filter(sentiment == "joy")
+
+tidy_books %>%
+  filter(book == "Emma") %>% 
+  inner_join(nrc_joy, by = join_by("word")) %>% 
+  count(word, sort = TRUE)
+```
+
+<br>
+
+#### 2.2.2. Change in sentiment across Jane Austen's novels
+
+First, determine the sentiment score for each word. Then count the number of positive and negative sentiment words in each book and calculate a net sentiment score (ie, the difference between positive and negative scores).
+
+```{r calc-change-in-sentiment-austen-novels, warning=FALSE}
+jane_austen_sentiment <- tidy_books %>%
+  inner_join(get_sentiments("bing"), by = join_by("word")) %>%
+  count(book, index = linenumber %/% 80, sentiment) %>%
+  pivot_wider(names_from = sentiment, values_from = n, values_fill = 0) %>% 
+  mutate(
+    sentiment = positive - negative
+  )
+```
+
+Plot sentiment scores across each novel (more specifically, across the index of 80-line sections of text).
+
+```{r plot-sentiment-austen-novels}
+ggplot(jane_austen_sentiment, aes(index, sentiment, fill = book)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~book, ncol = 2, scales = "free_x") +
+  theme(axis.title = element_text(face = "bold")) +
+  ggtitle("Sentiment through Jane Austen's novels")
+```
+
+<br>
+
+#### 2.2.3. Change in sentiment across *Pride & Prejudice* with different lexicons
+
+First filter the words of interest
+
+```{r filter-pride-prejudice}
+pride_prejudice <- tidy_books %>% 
+  filter(book == "Pride & Prejudice")
+
+pride_prejudice
+```
+
+Then calculate the sentiment scores with the different lexicons
+
+```{r calc-sentiment-lexicons, warning=FALSE, message=FALSE}
+afinn <- pride_prejudice %>% 
+  inner_join(get_sentiments("afinn")) %>% 
+  group_by(index = linenumber %/% 80) %>% 
+  summarise(
+    sentiment = sum(value)
+  ) %>% 
+  mutate(
+    method = "AFINN"
+  )
+
+bing_and_nrc <- bind_rows(
+  pride_prejudice %>% 
+    inner_join(get_sentiments("bing")) %>%
+    mutate(
+      method = "Bing et al."
+    ),
+  pride_prejudice %>% 
+    inner_join(get_sentiments("nrc") %>% 
+                 filter(sentiment %in% c("positive", "negative"))
+    ) %>%
+    mutate(
+      method = "NRC"
+    )) %>%
+  count(method, index = linenumber %/% 80, sentiment) %>%
+  pivot_wider(names_from = sentiment,
+              values_from = n,
+              values_fill = 0) %>% 
+  mutate(
+    sentiment = positive - negative
+  )
+```
+
+Bind the results and visualize them
+
+```{r plot-sentiment-pride-prejudice-lexicons}
+bind_rows(afinn, bing_and_nrc) %>%
+  ggplot(aes(index, sentiment, fill = method)) +
+    geom_col(show.legend = FALSE) +
+    facet_wrap(~method, ncol = 1, scales = "free_y") +
+    theme(axis.title = element_text(face = "bold")) +
+    ggtitle("Comparing 3 sentiment lexicons with Pride and Prejudice")
+```
+
+<br>
+
+#### 2.2.4. Number of positive and negative words in different lexicons
+
+NRC
+
+Note: The n's are slightly different from those shown in the book (see commented lines below). I assume this is because the lexicon has been updated since the time that the book was written.
+
+```{r nrc-pos-neg-counts}
+get_sentiments("nrc") %>% 
+  filter(sentiment %in% c("positive", "negative")) %>% 
+  count(sentiment)
+#> 1 negative   3324
+#> 2 positive   2312
+```
+
+Bing
+
+```{r bing-pos-neg-counts}
+get_sentiments("bing") %>% 
+  count(sentiment)
+#> 1 negative   4781
+#> 2 positive   2005
+```
+
+<br>
+
+#### 2.2.5. Most common positive and negative words in the Bing lexicon
+
+Calculate word counts
+
+```{r calc-bing-word-counts, warning=FALSE}
+bing_word_counts <- tidy_books %>%
+  inner_join(get_sentiments("bing"), by = join_by("word")) %>%
+  count(word, sentiment, sort = TRUE) %>%
+  ungroup()
+
+bing_word_counts
+```
+
+Visual comparison
+
+```{r barplot-bing-word-counts}
+bing_word_counts %>%
+  group_by(sentiment) %>%
+  slice_max(n, n = 10) %>% 
+  ungroup() %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(n, word, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~sentiment, scales = "free_y") +
+  labs(x = "Contribution to sentiment", y = NULL)
+```
+
+<br>
+
+#### 2.2.6. Custom stop words
+
+Jane Austen used "miss" as a title, not a negative emotion. To prevent the analysis from being skewed by this word, we can add it to a custom stop word list:
+
+```{r custom-stop-word}
+custom_stop_words <- bind_rows(tibble(word = c("miss"), lexicon = c("custom")), 
+                               stop_words)
+custom_stop_words
+```
+
+<br>
+
+#### 2.2.7. Wordclouds
+
+Visualize the most common words in Jane Austen's novels
+
+```{r austen-novels-wordcloud, fig.width=6, fig.height=6}
+tidy_books %>%
+  anti_join(stop_words, by = join_by("word")) %>%
+  count(word) %>%
+  with(wordcloud(word, n, max.words = 100))
+```
+
+Tag the positive and negative words using the Bing lexicon, then visualize the most common ones with a wordcloud.
+
+```{r austen-pos-neg-wordcloud, warning=FALSE}
+tidy_books %>%
+  inner_join(get_sentiments("bing"), by = join_by("word")) %>%
+  count(word, sentiment, sort = TRUE) %>%
+  acast(word ~ sentiment, value.var = "n", fill = 0) %>%
+  comparison.cloud(colors = c("gray20", "gray80"), max.words = 100)
+```
+
+<br>
+
+#### 2.2.8. Looking at units beyond words
+
+An example of tokenizing into sentences
+
+```{r tokenize-sentence}
+p_and_p_sentences <- tibble(text = prideprejudice) %>% 
+  unnest_tokens(sentence, text, token = "sentences")
+
+p_and_p_sentences$sentence[2]
+```
+
+An example of splitting tokens using a regex pattern to divide Jane Austen's novels by chapter
+
+```{r divide-austen-novels-by-chapter}
+austen_chapters <- austen_books() %>%
+  group_by(book) %>%
+  unnest_tokens(chapter, text, token = "regex", pattern = "Chapter|CHAPTER [\\dIVXLC]") %>%
+  ungroup()
+
+austen_chapters %>% 
+  group_by(book) %>% 
+  summarise(chapters = n())
+```
+
+<br>
+
+#### 2.2.9. Sentiment analysis by chapter
+
+Get negative words in Bing lexicon
+
+```{r bing-negative-words}
+bingnegative <- get_sentiments("bing") %>% 
+  filter(sentiment == "negative")
+```
+
+Create a dataframe of the number of words in each chapter
+
+```{r word-count-by-chapter, message=FALSE}
+wordcounts <- tidy_books %>%
+  group_by(book, chapter) %>%
+  summarize(words = n())
+```
+
+Calculate proportion of negative words in each chapter
+
+```{r calc-prop-neg-words-by-chapter, message=FALSE}
+tidy_books %>%
+  semi_join(bingnegative, by = join_by("word")) %>%
+  group_by(book, chapter) %>%
+  summarize(negativewords = n()) %>%
+  left_join(wordcounts, by = c("book", "chapter")) %>%
+  mutate(
+    # I added round() so output matches the book
+    ratio = round(negativewords/words, 4)
+  ) %>%
+  filter(chapter != 0) %>%
+  slice_max(ratio, n = 1) %>% 
+  ungroup()
+```
+
+<br>
+
+## 3. Extending to another text source and sentiment lexicon
+
+### 3.1. Text source
+
+I obtained customer reviews from the [Yelp Open Dataset](https://www.yelp.com/dataset), which contains nearly 7 million reviews of 150,000 businesses. Considering the size of the raw data (\>5 Gb), GitHub storage limits (generally 100 Mb, but up to 2 Gb with large file storage), and that R loads all data in memory, I decided that 50,000 reviews would be sufficient and manageable for analysis.
+
+I extracted the first 50,000 lines from the source file on the command line.
+
+```{bash, eval=FALSE}
+head -50000 yelp_reviews.json > yelp_reviews50K.json
+```
+
+<br>
+
+### 3.2. Text data transformations
+
+#### 3.2.1. Command-line transformations
+
+The raw data from Yelp was supposedly in JSON format; however, it failed a [JSON validator](https://jsonformatter.curiousconcept.com/), which flagged multiple root elements and missing commas between objects. I corrected these issues on the command line.
+
+```{bash, eval=FALSE}
+# add comma to end of each line
+sed "s/$/,/g" yelp_reviews50K.json > yelp_reviews50K2.json
+# remove the last one
+# 2 characters are truncated because there is also a \n at the end of the line
+truncate -s -2 yelp_reviews50K2.json
+# add a top-level root element called "reviews"
+# prepend
+sed -i.old '1s;^;{ "reviews": [\n;' yelp_reviews50K2.json
+# postpend
+echo "] }" >> yelp_reviews50K2.json
+```
+
+#### 3.2.2. Convert JSON data to dataframe
+
+After validating the corrected JSON data, I pushed the file to my GitHub repository and then read it into R.
+
+```{r import-json-reviews}
+yelp_reviews <- fromJSON("https://github.com/alexandersimon1/Data607/raw/main/Assignment10/yelp_reviews50K.json", flatten = TRUE)
+```
+
+The data structure is shown below.
+
+```{r}
+str(yelp_reviews)
+```
+
+I binded the columns into a dataframe, selected the relevant columns, and converted the date column to a date type.
+
+```{r reviews-list-to-df}
+yelp_reviews_df <- bind_cols(yelp_reviews[[1]])
+yelp_reviews_df <- yelp_reviews_df %>%
+  select(review_id, business_id, text, date, review_stars = stars) %>%
+  mutate(
+    date = as.Date(date)
+  )
+```
+
+#### 3.2.3. Transformations for text mining
+
+I removed numbers, replaced hyphen/dashes with spaces, and stripped extra white space. Note that `unnest_tokens()` will take care of punctuation and change case to lowercase.
+
+```{r tidy-review-text}
+yelp_reviews_df <- yelp_reviews_df %>%
+  mutate(
+    text = str_replace_all(text, "-", " "),
+    text = str_replace_all(text, "\\d", ""),
+    text = str_replace_all(text, "\\s{2,}", " ")
+  )
+```
+
+Then I tokenized the text and removed stop words.
+
+```{r tokenize-reviews}
+review_words <- yelp_reviews_df %>%
+  unnest_tokens(word, text) %>%
+  anti_join(stop_words, by = "word")  
+```
+
+<br>
+
+### 3.3. GI sentiment lexicon
+
+In addition to the AFINN, Bing, and NRC lexicons used in chapter 2 of *Text Mining with R,* I used the "[General Inquirer](https://inquirer.sites.fas.harvard.edu/homecat.htm)" (GI) dictionary, which includes positive and negative words from the Harvard IV-4 psychosocial dictionary and Lasswell value dictionary.[^4] The GI dictionary is available in the [`SentimentAnalysis`](https://cran.r-project.org/web/packages/SentimentAnalysis/) R package.
+
+[^4]: Dunphy, DC (1974). Harvard IV-4 Dictionary General Inquirer project. Sydney: University of New South Wales.
+
+Load the dictionary
+
+```{r load-GI-dictionary}
+gi_dict <- loadDictionaryGI()
+```
+
+The dictionary is structured as a list of 2 character vectors of positive and negative words.
+
+```{r GI-dictionary-structure}
+str(gi_dict)
+```
+
+I converted each list to a dataframe similar to the other three sentiment lexicons.
+
+```{r create-gi-pos-neg-df}
+gi_positive <- tibble(word = gi_dict[["positiveWords"]], sentiment = c("positive"))
+gi_negative <- tibble(word = gi_dict[["negativeWords"]], sentiment = c("negative"))
+gi_all <- bind_rows(gi_positive, gi_negative)
+```
+
+<br>
+
+#### 3.3.1. Number of positive and negative words in GI lexicon vs other lexicons
+
+To include AFINN in the comparison, I first defined positive and negative sentiments.
+
+```{r afinn-positive-negative-words}
+afinn_sentiments <- get_sentiments("afinn") %>% 
+  mutate(
+    sentiment = case_when(value < 0 ~ "negative",
+                          value == 0 ~ "neutral",
+                          value > 0 ~ "positive")
+  )
+
+afinn_positive <- afinn_sentiments %>%
+  filter(sentiment == "positive")
+
+afinn_negative <- afinn_sentiments %>%
+  filter(sentiment == "negative")
+
+afinn_all <- bind_rows(afinn_positive, afinn_negative)
+```
+
+Then I counted the number of positive and negative sentiments in each lexicon.
+
+```{r count-pos-neg-sentiments, message=FALSE}
+# AFINN
+afinn_counts <- afinn_all %>%
+  count(sentiment) %>%
+  mutate(
+    prop = round(n / sum(n), 2)
+  )
+
+# Bing
+bing_counts <- get_sentiments("bing") %>% 
+  count(sentiment) %>%
+  mutate(
+    prop = round(n / sum(n), 2)
+  )  
+
+# NRC
+nrc_counts <- get_sentiments("nrc") %>% 
+  filter(sentiment %in% c("positive", "negative")) %>% 
+  count(sentiment) %>%
+  mutate(
+    prop = round(n / sum(n), 2)
+  )  
+
+# GI
+gi_counts <- gi_all %>%
+  count(sentiment) %>%
+  mutate(
+    prop = round(n / sum(n), 2)
+  )  
+```
+
+All the lexicons have more negative words than positive words. The proportions of negative and positive words in the GI lexicon is most similar to the NRC lexicon.
+
+```{r postive-negative-words-in-lexicons, message=FALSE}
+lexicon_counts <- bind_cols(afinn_counts, bing_counts$n, bing_counts$prop,
+                            nrc_counts$n, nrc_counts$prop,
+                            gi_counts$n, gi_counts$prop)
+
+colnames(lexicon_counts) <- c("sentiment", "afinn", "prop", "bing", "prop", "nrc", "prop", "gi", "prop")
+lexicon_counts
+```
+
+<br>
+
+### 3.4. Sentiment analysis
+
+Please note that, due to differences between books and customer reviews, this section is not an exact duplicate of the analyses in *Text Mining with R*, chapter 2 (Section [2. Implementing the base code]). However, I have tried to perform similar analyses.
+
+#### 3.4.1. Most common words in Yelp reviews
+
+First, I counted the most common words in the Yelp reviews. Not surprisingly, the most frequent words are related to topics that one would expect in reviews of businesses (eg, time, service, staff). The most frequent word "food" suggests that most of the Yelp reviews are about restaurants.
+
+```{r yelp-most-common-words}
+review_words %>%
+  count(word, sort = TRUE) %>%
+  slice_head(n = 10)
+```
+
+Word cloud of the most common words
+
+```{r yelp-reviews-most-freq-words-wordcloud}
+set.seed(1234)
+word_counts <- review_words %>%
+  count(word)
+
+wordcloud(words = word_counts$word, freq = word_counts$n, min.freq = 50,
+          max.words = 50, random.order = FALSE, rot.per = 0,
+          colors = brewer.pal(5, "Dark2"))
+```
+
+<br>
+
+#### 3.4.2. Comparison of most common positive and negative words in Yelp reviews using different lexicons
+
+I created a function to get the 10 most common words in the Yelp reviews using a specified lexicon and sentiment category (positive or negative). This function reduces the amount of code repetition for the analyses.
+
+```{r top10-words-function}
+get_top10_words <- function(lexicon, category, words) {
+# This function returns a dataframe of the 10 most common words in a dataframe of words, 
+# given a particular lexicon (string) and sentiment category (string)
+  
+# First perform the inner join
+# The AFINN and GI lexicons are already separated into positive and negative sentiments
+  if (lexicon == "afinn" | lexicon == "gi") {
+    lexicon_sentiment <- paste(lexicon, category, sep = "_")
+    top_words <- words %>%  
+      inner_join(eval(parse(text = lexicon_sentiment)), by = "word")     
+  } else {
+# For Bing and NRC lexicons, filter the desired sentiment before inner join
+  top_words <- words %>%  
+    inner_join(get_sentiments(lexicon) %>% filter(sentiment == category), by = "word")
+  }
+
+# Then get the 10 most common words and rename the lexicon column
+  top_words <- top_words %>%
+    count(word, sort = TRUE) %>%
+    slice_head(n = 10) %>%
+    # Helpful vignette on embracing arguments and name injection
+    # https://cran.r-project.org/web/packages/dplyr/vignettes/programming.html
+    rename({{lexicon}} := word) 
+  
+  return(top_words)
+}
+```
+
+The dataframe below shows that the 10 most common positive words in the Yelp reviews vary depending on the sentiment lexicon. However, there are some similarities among the top 3 words for each lexicon. "Nice" was the most common positive word with AFINN, NRC, and GI lexicons. "Love" was the second most common positive word for all lexicons. Similarly, "friendly" was the third most common positive word with the AFINN, NRC, and Bing lexicons.
+
+```{r yelp-reviews-top-positive-words, message=FALSE}
+top10_positive_words <- bind_cols(get_top10_words("afinn", "positive", review_words),
+                                  get_top10_words("bing", "positive", review_words),
+                                  get_top10_words("nrc", "positive", review_words),
+                                  get_top10_words("gi", "positive", review_words))
+
+# rename word count columns
+# create sequence of indexes of columns to be renamed (ie, 2, 4, 6, 8)
+col_indexes <- seq(2, ncol(top10_positive_words), 2)
+# rename each column in the sequence as 'n'
+colnames(top10_positive_words)[col_indexes] <- rep(c("n"), 4)
+
+top10_positive_words
+```
+
+The dataframe below shows that the 10 most common negative words in the Yelp reviews also vary depending on the sentiment lexicon. In general, the variability between lexicons is greater than that for the 10 most common positive words, which suggests that the lexicons are more similar to each other with respect to positive words than negative words.
+
+"Bad" was a highly ranked negative word with all lexicons—#1 with AFINN and Bing, #2 with NRC, and #4 with GI. "Disappointed" was the second most common negative word with the AFINN lexicon and the third most common with the NRC and Bing lexicons, but it did not rank in the top 10 with the GI lexicon. "Wait" was the most common negative word with the NRC lexicon and the second most common with the GI lexicon.
+
+In general, the negative words from the NRC and Bing lexicons make the most sense. On the other hand, it is unclear why some of the words from the GI lexicon are considered negative, such as "home" and "spot". Similarly, a few of the AFINN words, such as "pay" and "cut" are not clearly negative. This may suggest that the NRC and Bing lexicons are more appropriate for sentiment analysis of the Yelp reviews.
+
+```{r yelp-reviews-top-negative-words, message=FALSE}
+top10_negative_words <- bind_cols(get_top10_words("afinn", "negative", review_words),
+                                  get_top10_words("bing", "negative", review_words),
+                                  get_top10_words("nrc", "negative", review_words),
+                                  get_top10_words("gi", "negative", review_words))
+
+# rename word count columns
+# create sequence of indexes of columns to be renamed (ie, 2, 4, 6, 8)
+col_indexes <- seq(2, ncol(top10_negative_words), 2)
+# rename each column in the sequence as 'n'
+colnames(top10_negative_words)[col_indexes] <- rep(c("n"), 4)
+
+top10_negative_words
+```
+
+<br>
+
+#### 3.4.3. Comparison word clouds
+
+AFINN
+
+```{r comparison-wordcloud-afinn, fig.width=6, fig.height=6}
+review_words %>%
+  inner_join(afinn_all, by = "word") %>%
+  count(word, sentiment, sort = TRUE) %>%
+  acast(word ~ sentiment, value.var = "n", fill = 0) %>%
+  comparison.cloud(colors = c("darkred", "blue"), max.words = 50)
+```
+
+Bing
+
+```{r comparison-wordcloud-bing, warning=FALSE, fig.width=6, fig.height=6}
+review_words %>%
+  inner_join(get_sentiments("bing"), by = "word") %>%
+  count(word, sentiment, sort = TRUE) %>%
+  acast(word ~ sentiment, value.var = "n", fill = 0) %>%
+  comparison.cloud(colors = c("darkred", "blue"), max.words = 50)
+```
+
+NRC
+
+```{r comparison-wordcloud-nrc, warning=FALSE, fig.width=6, fig.height=6}
+review_words %>%
+  inner_join(get_sentiments("nrc") %>% 
+             filter(sentiment %in% c("positive", "negative")), by = "word") %>%
+  count(word, sentiment, sort = TRUE) %>%
+  acast(word ~ sentiment, value.var = "n", fill = 0) %>%
+  comparison.cloud(colors = c("darkred", "blue"), max.words = 50)
+```
+
+GI
+
+```{r comparison-wordcloud-gi, warning=FALSE, fig.width=6, fig.height=6}
+review_words %>%
+  inner_join(gi_all, by = "word") %>%
+  count(word, sentiment, sort = TRUE) %>%
+  acast(word ~ sentiment, value.var = "n", fill = 0) %>%
+  comparison.cloud(colors = c("darkred", "blue"), max.words = 50)
+```
+
+<br>
+
+#### 3.4.4. Comparing sentiment lexicons
+
+I further examined the differences between the four lexicons by comparing the net sentiments over time. In *Text Mining with R* chapter 2, the AFINN analysis was performed using the sum of the sentiment scores. However, this may inflate the total sentiment scores, so I used the binary reclassification of the AFINN lexicon that I defined in the previous section instead. This way, all four lexicons are compared with binary positive/negative sentiments.
+
+```{r reviews-net-sentiment, warning=FALSE}
+all_lexicons <- bind_rows(
+  # AFINN
+  review_words %>% 
+    inner_join(afinn_all, by = "word") %>%
+    mutate(method = "AFINN"),
+  # GI
+  review_words %>% 
+    inner_join(gi_all, by = "word") %>%
+    mutate(method = "GI"),
+  # Bing
+  review_words %>% 
+    inner_join(get_sentiments("bing"), by = "word") %>%
+    mutate(method = "Bing"),
+  # NRC
+  review_words %>% 
+    inner_join(get_sentiments("nrc") %>% 
+                 filter(sentiment %in% c("positive", "negative")), by = "word") %>%
+    mutate(method = "NRC")) %>%
+  # I defined the index as the number of days since January 1, 2005
+  # due to ggplot issues with overcrowded date labels
+  mutate(
+    index = as.integer(date - as.Date("2005-01-01"))
+  ) %>%
+  count(method, index, sentiment) %>%
+  pivot_wider(names_from = sentiment,
+              values_from = n,
+              values_fill = 0) %>% 
+  mutate(net_sentiment = positive - negative)
+```
+
+Because the range of the net sentiment values is skewed toward large positive values, I applied a log-modulus transformation, which helps spread the magnitude of the values while preserving their sign, to improve the plots below.[^5]
+
+[^5]: $L(x) = sign(x) + log(|x| + 1)$ <https://blogs.sas.com/content/iml/2014/07/14/log-transformation-of-pos-neg.html>
+
+```{r range-net-sentiment-values1}
+sprintf("Net sentiment values range from %.3f to %.3f", 
+        min(all_lexicons$net_sentiment), max(all_lexicons$net_sentiment))
+```
+
+After the transformation, the magnitude of the positive net sentiment values are more similar to the negative values.
+
+```{r log-modulus-transformation}
+all_lexicons <- all_lexicons %>%
+  mutate(
+    # log1p(x) computes log(1+x)
+    # https://www.rdocumentation.org/packages/base/versions/3.6.2/topics/log
+    net_sentiment = sign(net_sentiment) * log1p(abs(net_sentiment))
+  )
+
+sprintf("Net sentiment values range from %.3f to %.3f", 
+        min(all_lexicons$net_sentiment), max(all_lexicons$net_sentiment))
+```
+
+Overall, the net sentiment values over time are similar for all lexicons, particularly for the reviews with positive values. The main differences appear to be in the reviews with negative net sentiments, which is similar to the findings from the analysis of the most common positive and negative words in the reviews with the four lexicons (Section [3.4.2. Comparison of most common positive and negative words in Yelp reviews using different lexicons]). Focusing on these reviews, it can be seen that the GI lexicon results in the most reviews with negative net sentiments. In contrast, the NRC lexicon has the fewest negative net sentiments. The AFINN and Bing lexicons are intermediate.
+
+```{r bind-afinn-bing-nrc-net-sentiments, warning=FALSE}
+# Color positive and negative values differently to enhance contrast
+ggplot(all_lexicons, aes(index, net_sentiment, color = sign(net_sentiment))) +
+    geom_col(show.legend = FALSE) +
+    geom_hline(yintercept = 0, color = "gray") +
+    xlab("Year") + ylab("Lm(net sentiment)*") + 
+    labs(caption = "*log-modulus transformation: Lm(x) = sign(x) * log(|x| + 1)") +  
+    theme(axis.title = element_text(face = "bold"),
+          plot.caption = element_text(hjust = 0)) +
+    scale_x_continuous(breaks = seq(0, 5110, by = 365),
+                       labels = c("2005", "2006", "2007", "2008", "2009", "2010", "2011", "2012",
+                                  "2013", "2014", "2015", "2016", "2017", "2018", "2019")) +
+    facet_wrap(~ method, ncol = 1)
+```
+
+Combining these results with those from section 3.4.2, which suggested that the NRC and Bing lexicons identified the most intuitive negative words, I think the Bing lexicon is the best lexicon to perform sentiment analysis of the Yelp reviews.
+
+<br>
+
+## 4. Exploratory analyses
+
+In addition to customer reviews, the Yelp Open dataset includes business data, such as the name, address, and latitude/longitude coordinates. I was very interested in merging these datasets to perform a combination of geospatial and sentiment analysis as a demonstration of how these data could be used to inform business intelligence and decision-making.
+
+### 4.1. Command-line transformations of Yelp business dataset
+
+Similar to the review JSON data, I corrected the JSON format of the business data on the command line.
+
+```{bash, eval=FALSE}
+# add comma to end of each line
+sed "s/$/,/g" yelp_business.json > yelp_business2.json
+# remove the last one
+# 2 characters are truncated because there is also a \n at the end of the line
+truncate -s -2 yelp_business2.json
+# add a top-level root element called "reviews"
+# prepend
+sed -i.old '1s;^;{ "businessess": [\n;' yelp_business2.json
+# postpend
+echo "] }" >> yelp_business2.json
+```
+
+<br>
+
+### 4.2. Convert JSON data to dataframe
+
+I saved the corrected data file to my GitHub repository and then read it into R.
+
+```{r import-json-businesses}
+yelp_businesses <- fromJSON("https://github.com/alexandersimon1/Data607/raw/main/Assignment10/yelp_business.json", flatten = TRUE)
+```
+
+The data structure is shown below.
+
+```{r}
+str(yelp_businesses)
+```
+
+I binded the columns into a dataframe and selected the relevant columns.
+
+```{r businesses-list-to-df}
+yelp_businesses_df <- bind_cols(yelp_businesses[[1]])
+yelp_businesses_df <- yelp_businesses_df %>%
+  select(business_id, name, address, city, state, postal_code, latitude, longitude, 
+         business_stars = stars, review_count)
+```
+
+<br>
+
+### 4.3. Characteristics of the Yelp business data
+
+#### 4.3.1. Number of businesses
+
+There are 114,117 unique business names in the dataset.
+
+```{r distinct-business-names}
+yelp_businesses_df %>%
+  select(name) %>%
+  n_distinct()
+```
+
+<br>
+
+#### 4.3.2. Businesses with multiple locations
+
+Starbucks had the most store locations, so I focused the geospatial analyses on this business.
+
+```{r business-chains}
+yelp_businesses_df %>%
+  count(name, sort = TRUE) %>%
+  filter(n >= 200)
+```
+
+<br>
+
+### 4.4. Combine Yelp reviews and business data
+
+```{r combine-reviews-business-data}
+yelp_business_reviews <- inner_join(yelp_businesses_df, yelp_reviews_df, by = "business_id")
+```
+
+<br>
+
+### 4.5. Map Starbucks overall business ratings ("stars")
+
+I mapped the business ratings ("stars") of all Starbucks locations. These ratings were included in the Yelp dataset.
+
+#### 4.5.1. Align nomenclature in US map dataset and Yelp business dataset
+
+First, load the US map data.
+
+```{r simple-heatmap}
+states <- map_data("state")
+```
+
+Since the full names of states are used in the map data whereas the Yelp business dataset uses state abbreviations, I created a named vector to map the state names to their abbreviations.
+
+```{r}
+state_names <- c("alabama", "alaska", "arizona", "arkansas", "california", "colorado", 
+                 "connecticut", "delaware", "district of columbia", "florida", "georgia", 
+                 "hawaii", "idaho", "illinois", "indiana", "iowa", "kansas", "kentucky", 
+                 "louisiana", "maine", "maryland", "massachusetts", "michigan", "minnesota", 
+                 "mississippi", "missouri", "montana", "nebraska", "nevada", "new hampshire", 
+                 "new jersey", "new mexico", "new york", "north carolina", "north dakota",
+                 "ohio", "oklahoma", "oregon", "pennsylvania", "rhode island", "south carolina", 
+                 "south dakota", "tennessee", "texas", "utah", "vermont", "virginia", "washington", 
+                 "west virginia", "wisconsin", "wyoming")
+state_abbreviations <- c("AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "DC", "FL", "GA", "HI", 
+                         "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD", "MA", "MI", "MN", 
+                         "MS", "MO", "MT", "NE", "NV", "NH", "NJ", "NM", "NY", "NC", "ND", "OH", 
+                         "OK", "OR", "PA", "RI", "SC", "SD", "TN", "TX", "UT", "VT", "VA", "WA", 
+                         "WV", "WI", "WY")
+get_state_abbreviation <- setNames(state_abbreviations, state_names)
+```
+
+I used this vector to rename the states in the map data.
+
+```{r align-states-data}
+states <- states %>%
+  rename(state = region) %>%
+  mutate(
+    state = unname(get_state_abbreviation[state])
+  )
+```
+
+#### 4.5.2. Combine the map and business datasets
+
+Then I combined the map data with the Starbucks business data.
+
+```{r merge-map-review-data, warning=FALSE}
+yelp_starbucks <- yelp_businesses_df %>%
+  filter(name == "Starbucks")
+
+starbucks_us_mapdata <- inner_join(states, yelp_starbucks, by = "state")
+```
+
+#### 4.5.3. Create map
+
+Finally, I plotted the Starbucks store locations and colored the data points by the business ratings (number of stars). Although the data points overlap, the transparency gives a sense of the average overall rating, which appears to be 3 to 4 in most cities. Starbucks stores in Los Angeles, CA appear to have the lowest ratings nationwide.
+
+Note that this is an interactive plot and can be panned and zoomed as desired. These operations are not instantaneous and may take a few seconds, so please be patient.
+
+```{r map-starbucks-us-business-rating}
+# settings to remove the map grid, axes labels, and tick marks
+plain_background <- theme(
+  axis.text = element_blank(),
+  axis.line = element_blank(),
+  axis.ticks = element_blank(),
+  panel.border = element_blank(),
+  panel.grid = element_blank(),
+  axis.title = element_blank(),
+  panel.background = element_rect(fill = "white")
+)
+
+starbucks_us_map <- ggplot(states, aes(long, lat, group = group)) +
+  geom_polygon() + coord_fixed(1.3) +
+  geom_point(starbucks_us_mapdata,
+             mapping = aes(longitude, latitude, group = group, color = business_stars), alpha = 0.4) +
+  scale_color_gradient(low = "red", high = "green", name = "Rating\n(stars)") +
+  plain_background
+
+ggplotly(starbucks_us_map)
+```
+
+The map above shows that the greater Phliadelphia area (including the adjacent Camden, NJ area) has many Starbucks locations. Looking at this region more closely (below) reveals that there are more red data points in New Jersey, indicating that the Starbucks stores there have lower star ratings than those in Philadephia.
+
+```{r map-starbucks-philly-business-rating}
+starbucks_philly_map <- ggplot(filter(states, state %in% c("NJ", "PA")), 
+                               aes(long, lat, group = group)) +
+  geom_polygon() + coord_fixed(1.3) +
+  geom_point(filter(starbucks_us_mapdata, state %in% c("NJ", "PA")),
+             mapping = aes(longitude, latitude, group = group, color = business_stars), 
+             alpha = 0.5) +
+  scale_color_gradient(low = "red", high = "green", name = "Rating\n(stars)") +
+  plain_background
+
+ggplotly(starbucks_philly_map)
+```
+
+<br>
+
+### 4.6. Map Yelp review sentiments
+
+Next, I wanted to map sentiments from the Yelp reviews and see how they compared with the star ratings. To do this, I calculated the average net sentiment of all reviews at each Starbucks location. Based on my findings from the analyses of the different sentiment lexicons in Section [3.4. Sentiment analysis], I selected the Bing lexicon for this analysis.
+
+#### 4.6.1. Filter the reviews
+
+I filtered the reviews from Starbucks stores in the Philadelphia and Camden, NJ area. Since the Yelp data are limited to those areas, I just filtered by the two states.
+
+```{r calc-average-net-sentiment-starbucks}
+starbucks_philly_reviews <- yelp_business_reviews %>%
+  filter(name == "Starbucks" & state %in% c("NJ", "PA"))
+```
+
+#### 4.6.2. Calculate net sentiment for each review
+
+Then I calculated the net sentiment for each review in this subset.
+
+```{r bing-net-sentiment-each-review, warning=FALSE}
+calc_net_sentiment_bing <- function(text) {
+  # To tokenize a string, don't need unnest_tokens, just split it up
+  sentiment_words <- as_tibble(str_split_1(text, " ")) %>%
+    # rename first column for anti_join
+    rename(word = names(.)[1]) %>%
+    anti_join(stop_words, by = "word") %>%
+    inner_join(get_sentiments("bing"), by = "word")
+
+  positive = sum(sentiment_words$sentiment == "positive")
+  negative = sum(sentiment_words$sentiment == "negative")
+  net_sentiment = positive - negative
+  return(net_sentiment)
+}
+
+starbucks_philly_reviews <- starbucks_philly_reviews %>%
+  rowwise() %>%
+  mutate(
+    net_sentiment = calc_net_sentiment_bing(text)
+  ) %>%
+  ungroup()
+```
+
+#### 4.6.3. Calculate average net sentiment for each business location
+
+After this, I calculated the average net sentiment for each Starbucks location.
+
+```{r avg-net-sentiment-by-store}
+starbucks_philly_avg_sentiment_store <- starbucks_philly_reviews %>%
+  group_by(address) %>%
+  mutate(
+    n_reviews = n(),
+    mean_sentiment = mean(net_sentiment)
+  ) %>%
+  distinct(address, .keep_all = TRUE) %>%
+  select(address, city, state, latitude, longitude, n_reviews, mean_sentiment) %>%
+  arrange(desc(mean_sentiment))
+
+starbucks_philly_avg_sentiment_store
+```
+
+#### 4.6.4. Combine the map and sentiment datasets
+
+Then I combined the map data with the sentiment data.
+
+```{r merge-map-sentiment-data, warning=FALSE}
+starbucks_philly_mapdata <- inner_join(states, starbucks_philly_avg_sentiment_store, by = "state")
+```
+
+#### 4.6.5. Create map
+
+Overall, the sentiment map agrees with the business ("star") rating—customer reviews of Starbucks stores in New Jersey have lower average net sentiment values than those in Philadelphia.
+
+```{r map-starbucks-philly-avg-sentiment}
+starbucks_philly_map <- ggplot(filter(states, state %in% c("NJ", "PA")), aes(long, lat, group = group)) +  
+  geom_polygon() + coord_fixed(1.3) +
+  geom_point(starbucks_philly_mapdata,
+             mapping = aes(longitude, latitude, group = group, color = mean_sentiment), alpha = 0.5) +
+  scale_color_gradient(low = "red", high = "green", name = "Mean\nsentiment") +
+  plain_background
+
+ggplotly(starbucks_philly_map)
+```
+
+Based on these results (if they were more recent data), Starbucks management may want to examine the performance metrics of the Camden, NJ locations to better understand the cause and potential solutions for the lower mean sentiment scores of customer reviews.
+
+<br>
+
+## 5. Conclusions
+
+I successfully implemented the sentiment analysis of Jane Austen's novels described in *Text Mining with R*, chapter 2 using three different sentiment lexicons (AFINN, Bing, and NRC). I applied those techniques to analyze the sentiments of Yelp customer reviews and compared the results from the three sentiment lexicons along with a fourth, the GI lexicon. The analyses suggested the Bing lexicon gave the most balanced and intuitive results for analyzing the Yelp reviews.
+
+As an exploratory analysis, I combined the Yelp reviews with business names and locations and demonstrated how geospatial and sentiment analyses could be used together to provide insights about customer satisfaction and/or store performance. For example, among Starbucks stores in the Philadelphia + Camden, NJ area, these analyses showed Starbucks in Camden, NJ tended to have lower sentiment ratings than stores in Philadelphia. This finding was in general agreement with the geospatial analysis of the business (star) ratings.
+
+Finally, even with 50,000 reviews, this analysis is only a fraction of the 7 million reviews in the Yelp dataset. Potential future improvements include loading and preprocessing the data in a SQL database on a server. In addition, maps of metropolitan areas with more geographic features could be used.
