@@ -1,7 +1,7 @@
 ---
 title: "DATA607 TidyVerse CREATE Assignment"
 author: "Alexander Simon"
-date: "2024-03-17"
+date: "2024-04-07"
 output: html_document
 ---
 
@@ -9,27 +9,6 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
 library(kableExtra)
-
-kbl_display <- function(df, box_width, box_height = NULL) {
-# This function uses the kableExtra package to display a dataframe (df).
-# In an HTML document, if the table exceeds the specified dimensions it will be shown in a scrollable box.
-#
-# Arguments:
-# box_width <chr>: Width of scroll box, in pixels (eg, "200 px") or percentage of total screen width (eg, "100%")
-# box_height <chr>: [Optional] Height of scroll box, in pixels or percentage
-  
-  if (!is.null(box_height)) {
-    df %>%
-      kbl() %>%
-      kable_material() %>%
-      scroll_box(width = box_width, height = box_height)
-  } else {
-    df %>%
-      kbl() %>%
-      kable_material() %>%
-      scroll_box(width = box_width)
-  }
-}
 ```
 
 ## Introduction
@@ -128,7 +107,6 @@ Arguments:
 *Without across() - A separate command is needed for each rating. The code is repetitive, hard to read, and prone to errors (eg, typos).*
 
 ```{r mean-ratings-without-across}
-kbl_display(
 ryanair_reviews %>%
   summarise(
     Rating_seat_comfort_mean = round(mean(Rating_seat_comfort, na.rm = TRUE), 2),
@@ -139,8 +117,10 @@ ryanair_reviews %>%
     Rating_wifi_mean = round(mean(Rating_wifi, na.rm = TRUE), 2),
     Rating_value_mean = round(mean(Rating_value, na.rm = TRUE), 2),
     Rating_overall_mean = round(mean(Rating_overall, na.rm = TRUE), 2)
-  ), "100%", "75%"
-)
+  ) %>%
+  kbl() %>%
+  kable_minimal() %>%
+  scroll_box(width = "100%")
 ```
 
 <br>
@@ -148,7 +128,6 @@ ryanair_reviews %>%
 *With across() - The code is much simpler, regardless of the number of columns.*
 
 ```{r mean-ratings-with-across}
-kbl_display(
 ryanair_reviews %>%
   summarise(
     across(
@@ -156,8 +135,10 @@ ryanair_reviews %>%
       .fns = ~ round(mean(.x, na.rm = TRUE), 2),  # ".x" is a placeholder for the column
       .names = "{col}_mean"  # append "_mean" to each column name
     )
-  ), "100%", "75%"
-)
+  ) %>%
+  kbl() %>%
+  kable_minimal() %>%
+  scroll_box(width = "100%")
 ```
 
 <br>
@@ -169,7 +150,6 @@ The `.fns` argument of `across()` can have mulitple functions.
 *Without across() - Again, the code block is long and repetitive.*
 
 ```{r min-max-ratings-without-across}
-kbl_display(
 ryanair_reviews %>%
   summarise(
     Rating_seat_comfort_min = min(Rating_seat_comfort, na.rm = TRUE),
@@ -188,8 +168,10 @@ ryanair_reviews %>%
     Rating_value_max = max(Rating_value, na.rm = TRUE),    
     Rating_overall_min = min(Rating_overall, na.rm = TRUE),
     Rating_overall_max = max(Rating_overall, na.rm = TRUE)   
-  ), "100%", "75%"
-)
+  ) %>%
+  kbl() %>%
+  kable_minimal() %>%
+  scroll_box(width = "100%")
 ```
 
 <br>
@@ -197,7 +179,6 @@ ryanair_reviews %>%
 *With across() - The code is much simpler and easily scalable to more columns and/or functions.*
 
 ```{r min-max-ratings-with-across}
-kbl_display(
 ryanair_reviews %>%
   summarise(
     across(
@@ -206,8 +187,10 @@ ryanair_reviews %>%
                   max = ~ max(.x, na.rm = TRUE)),
       .names = "{col}_{fn}"  # append function name ({fn}) to each column name
     )
-  ), "100%", "75%"
-)
+  ) %>%
+  kbl() %>%
+  kable_minimal() %>%
+  scroll_box(width = "100%")
 ```
 
 <br>
