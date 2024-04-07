@@ -1,0 +1,74 @@
+---
+title: "DATA607 Assignment 11"
+author: "Alexander Simon"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+A [recommendation system](https://www.nvidia.com/en-us/glossary/recommendation-system/) is a type of artificial intelligence algorithm that uses information about users’ interests and history of consumption (material or digital goods) to suggest new items of interest. This type of system is most useful when the total number of items is too large for users to find by other means, such as browsing or using search engines, in a reasonable amount of time.
+
+Below, I analyze the [YouTube](https://www.youtube.com/) video recommendation system using the Scenario Design method.^[1](https://www.scribd.com/document/109502765/An-Approach-to-Customer-Experience)^
+
+## Scenario design analysis
+
+-   **Who is the target audence?**
+
+    The original vision of the creators of YouTube was an online platform where anyone could express themselves through video, ie the target audience is everyone with Internet access.^[2](https://www.untaylored.com/post/understanding-the-youtube-business-model-and-revenue-streams)^ This is reflected in the demographics of YouTube users—both men and women use the platform nearly equally, although male users are slightly more common (54%).^[3](https://sproutsocial.com/insights/youtube-stats/)^ In addition, adults of all ages use the site, although the most common age bracket is 25-34 years.
+
+-   **What are users' key goals?**
+
+    The goals of YouTube users are as diverse as the users and have evolved over time. Currently, many content creators use the platform to showcase their work or hobbies or whatever fascinates them, to attract followers with similar interests, and to generate revenue.^[2](https://www.untaylored.com/post/understanding-the-youtube-business-model-and-revenue-streams)^ On the other hand, many viewers use the platform to find videos and channels that align with their interests. However, some viewers may not have any goals except to pass time or relieve boredom.
+
+-   **How can YouTube help users accomplish those goals?**
+
+    For creators, YouTube can provide ways to generate revenue as well as drive users to their channel(s). For viewers, YouTube can maximize the diversity of content both in terms of topic and duration to accommodate viewers with different interests and availability/attention span to watch videos.
+
+    YouTube can help users accomplish these goals in several ways:
+
+    -   Using an effective recommendation system to provide new and engaging content to viewers and by driving viewers to creators’ channels
+
+    -   Frequently assessing the “pulse” of user interests and needs (eg, insights from user feedback, market analysis, competitive intelligence) and adapting the platform to meet changing goals
+
+    -   Having sufficient computational/IT resources to ensure that both creators and viewers can reliably store and access content and connect with others on the platform
+
+## How the YouTube recommendation system works
+
+I didn't reverse engineer YouTube because the methodology of its recommendation system has been described in detail.^[4](http://dx.doi.org/10.1145/2959100.2959190)^ As shown below, YouTube’s recommendation system uses a two-stage neural network that first generates a set of candidate videos from YouTube’s entire video collection, and then narrows the candidates by assigning each video a score and ranking them.
+
+![](https://github.com/alexandersimon1/Data607/blob/main/Assignment11/Figure1.png?raw=true)
+
+Candidate generation uses a user’s history of activity to identify a subset of several hundred videos that are considered relevant to the user. Relevance is assessed by [item-item collaborative filtering](https://developers.google.com/machine-learning/recommendation/collaborative/basics), a filtering technique that uses similarities between items (videos) that similar customers/users have selected to provide recommendations. The mathematical basis and computational implementation of the filtering are quite complex. Briefly, the filtering is a type of classification problem, which is solved using a [Softmax classifier](https://cs231n.github.io/linear-classify/#softmax-classifier) to determine the optimal probabilities for each class (video) given the user’s features (eg, search/watch history, age, location); the classes with the highest probabilities are the most relevant videos to the user.
+
+The ranking step uses a weighted logistic regression model to assign a score to each candidate video using a set of features that describe the user and the video (eg, how old it is, its title). This model is trained on “positive” videos (those that are clicked), which are weighted by observed watch time, and “negative” videos (those that are not clicked), which have unit weights (ie, weight = 1). In test or real-world datasets, several dozen of the highest scoring videos are recommended to the user.
+
+In addition to these models, YouTube uses efficient algorithms and other computational “tricks” to enable very fast calculations (milliseconds) at extremely large scale (billions of users and videos).
+
+## Ideas to improve YouTube’s recommendation capabilities
+
+-   **Customizing video “churn”** - In the paper that describes the methodology of the YouTube recommendation system,^[4](http://dx.doi.org/10.1145/2959100.2959190)^ the authors state that the most important user feature in the models is the user’s previous interaction with videos or channels and that this information is used to introduce “churn” (ie, if a user does not watch a recommended video it is demoted in the next page load and new videos are recommended). In my opinion, this is an annoying feature of YouTube, because users cannot click more than one of the several dozen recommended videos in the same window without the recommendation list changing. For users who do not like this, this creates extra “work” because they need to perform a third mental filtering step to select the one video they want to watch or remember to open recommended videos in a new tab or window (ie, so the initial recommendations are still accessible).
+
+    This method of generating churn assumes that all users want continuously updated recommendations. This does not meet the third part of Temkin’s Scenario Design, specifically that companies must make it easy for target users to achieve their goals. So one of my suggestions to improve YouTube’s recommendation system is to provide users a way to customize the amount of churn in recommended videos.
+
+-   **Performing sentiment analysis of video titles and descriptions** – A recent assessment of user satisfaction with the YouTube recommendation system noted that video titles with negative emotions tend to get recommended and viewed more than those with neutral or positive emotions, which may increase polarization and/or radicalization among viewers.^[5](https://doi.org/10.1016/j.procs.2022.12.156)^ Including sentiment analysis in the ranking step of the recommendation system and limiting the proportion of negative videos that are recommended could help reduce this effect.
+
+## Conclusions
+
+YouTube's recommendation system uses a two-stage neural network with a combination of item-item collaborative filtering and logistic regression. The ability of this system to generate recommendations from billions of videos in only a few milliseconds is quite impressive. Nevertheless, it could be improved by providing users the ability to control the amount of video churn and by balancing the proportion of videos with positive and negative emotions in its recommendations.
+
+## References
+
+1.  Temkin BD. Scenario Design: A Disciplined Approach to Customer Experience. Forrester Research, 2004. <https://www.scribd.com/document/109502765/An-Approach-to-Customer-Experience>
+
+2.  Larsen R. Understanding the YouTube business model and revenue streams. Untaylored, February 19, 2024. <https://www.untaylored.com/post/understanding-the-youtube-business-model-and-revenue-streams>
+
+3.  Zote, J. 25 YouTube stats marketers should know in 2024 [Updated]. Sprout Social, March 20, 2024. <https://sproutsocial.com/insights/youtube-stats/>
+
+4.  Covington P, Adams J, Sargin E. Deep neural networks for YouTube recommendations. RecSys ’16: Proceedings of the 10th ACM Conference on Recommender Systems. September 2016. <http://dx.doi.org/10.1145/2959100.2959190>
+
+5.  Erdvin et al. Level of user satisfaction with the current YouTube recommendation system. Procedia Comp Sci. 2023;216:442-452. <https://doi.org/10.1016/j.procs.2022.12.156>
