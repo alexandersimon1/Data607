@@ -1,0 +1,165 @@
+---
+title: "tidyverse CREATE: using the `purrr` package with data"
+output: html_document
+date: "2024-04-28"
+author:
+  - name: "AJ Strauman-Scott"
+  - name: "Extended by Alexander Simon"  
+    affiliations:
+      - name: City University of New York SPS
+        department: Department of Data Analytics
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+<br>
+
+This paper will use a sample dataset from Kaggle.com to create a programming sample “vignette” that demonstrates how to use the map functions of the `purrr` TidyVerse package [@purrr].
+
+The 'purrr' package loads automatically as part of the `tidyverse` series of R packages.
+
+```{r load-libraries, message=FALSE}
+library(tidyverse)
+```
+
+We load a dataset from Kaggle.com with data from All data is from American Community Survey 2010-2012 Public Use Microdata Series [@kaggle].
+
+```{r}
+majors <- read_csv('https://github.com/annejscott/DATA607/raw/main/assignments/week9/all-ages.csv', col_names = TRUE, show_col_types = FALSE) |> 
+  as.data.frame()
+```
+
+To create a new column with the percent of graduates from each major who are employed full time, we define a function to calculate the percentage employed, and then use the `purrr` package to `map` that function onto our data (in this case, `purrr::map2_dbl()` specifically.
+
+```{r function-def}
+calculate_proportion_employed <- function(full_time_employed, total) {
+  proportion <- full_time_employed / total
+  return(proportion)
+}
+
+majors <- majors |> 
+  mutate(proportion_employed = purrr::map2_dbl(Employed_full_time_year_round, Total, calculate_proportion_employed)) |> 
+  arrange(desc(proportion_employed))
+
+head(majors)
+```
+
+'Management Information Systems and Statistics' and 'Computer and Information Systems' are the majors that have the highest rates of post-graduate employment.
+
+All of our majors are in full capital letters. Let's use `purrr::map_chr()` with `str_to_title()` from the `tidyverse` `stringr` package to change that into proper grammea.
+
+```{r}
+majors$Major <- purrr::map_chr(majors$Major, ~str_to_title(.x))
+
+head(majors)
+```
+
+We load another .csv file from the same dataset, this time the information on gender breakdown in each major.
+
+```{r}
+women_stem <- read_csv('https://github.com/annejscott/DATA607/raw/main/assignments/week9/women-stem.csv', col_names = TRUE, show_col_types = FALSE) |> 
+  as.data.frame()
+```
+
+The `women_stem` dataset has information on gender proportions that doesn't exist in the `majors` dataset. Even though the datasets have different numbers of observations,the `purrr::map_dbl()` function can map the values from one data set into another.
+
+```{r}
+# apply str_to_title to women_stem df so strings in Major column match
+women_stem$Major <- purrr::map_chr(women_stem$Major, ~str_to_title(.x))
+
+sharewomen_map <- setNames(women_stem$ShareWomen, women_stem$Major)
+
+majors$ShareWomen <- purrr::map_dbl(majors$Major, ~ sharewomen_map[.x])
+
+head(majors)
+```
+
+Using the `purrr` package, we've been able to create an entirely new data set.
+
+<br>
+
+## More about `purrr`
+
+### Using map() to identify missing values
+
+A useful application of `map()` is to determine the number of missing values (NAs) in each column of a dataframe. Because the `majors` and `women_stem` dataframes had different numbers of observations, the application of `map_dbl()` above resulted in some missing values.
+
+The code below shows that there are 97 missing values in the new `ShareWomen` column and no missing values in the other columns.
+
+```{r}
+map(majors, ~ sum(is.na(.)))
+```
+
+<br>
+
+### Other variants of map()
+
+In addition to `map()` and `map2()`, which take one or two lists as input, respectively, there are many variants including:
+
+-   `pmap()` - arbitrary number of inputs
+
+-   `modify()` - outputs same data type as input
+
+-   `walk()` - perform an action iteratively but doesn't return anything
+
+Examples of these functions are shown below.
+
+<br>
+
+#### pmap()
+
+The code below concatenates all information about each major (code, name, category) in the `women_stem` dataframe into a single string.
+
+```{r}
+major_description <- function(Major_code, Major, Major_category, ...) {
+  major_str <- paste(Major_code, Major, Major_category, sep = "_")
+  return(major_str)
+}
+
+women_stem %>% 
+  pmap_chr(major_description) %>% 
+  head()
+```
+
+<br>
+
+#### modify()
+
+The code below uses a conditional form of `modify()` to apply a log transformation to all numeric values in the `women_stem` dataframe. This could be useful to transform data for a plot.
+
+```{r}
+# log1p(x) = log(x+1), useful when there are values between 0 and 1 such as proportions
+women_stem2 <- modify_if(women_stem, is.numeric, ~ log1p(.x))
+head(women_stem2)
+```
+
+<br>
+
+#### walk()
+
+The code below divides the `women_stem` dataframe by the major category and saves each part to a separate CSV file using `walk2()`, which takes two lists (categories and file paths) as input. Walk operations can also be performed with one list using `walk()` or many lists using `pwalk()`.
+
+```{r, warning=FALSE}
+# Create new folder in working directory
+wd <- getwd()
+new_folder <- paste0(wd, "/new")
+dir.create(new_folder)
+
+# Create a list for each major category
+categories <- split(women_stem, women_stem$Major_category)
+paths <- file.path(new_folder, paste0("women_stem-", names(categories), ".csv"))
+walk2(categories, paths, write.csv)
+
+# List the files
+dir(new_folder)
+```
+
+<br>
+
+## References
+
+Wickham H. 2019. Functionals. In *Advanced R*, 2nd ed., Chapter 9. Chapman & Hall. <https://adv-r.hadley.nz/functionals.html>
+
+Apply functions with purrr :: Cheatsheet. <https://rstudio.github.io/cheatsheets/html/purrr.html>
