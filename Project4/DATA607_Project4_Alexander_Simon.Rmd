@@ -1,0 +1,739 @@
+---
+title: "DATA607 Project 4"
+author: "Alexander Simon"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+set.seed(4096)  # Enables reproducibility of the random data partition
+library(caret)
+library(readtext)
+library(tidyverse)
+library(tidytext)
+library(tm)
+library(reshape2)
+```
+
+## 0. Packages
+
+I used the `tm` package to create document-term matrices and the `caret` package to perform supervised machine learning (SML) for text classification. If needed, you can install them using the commands below.
+
+```{r install-packages, eval=FALSE}
+install.packages("caret")
+install.packages("tm")
+```
+
+<br>
+
+## 1. Introduction
+
+[Document classification](https://en.wikipedia.org/wiki/Document_classification) is the process of assigning documents to one or more classes or categories based on shared characteristics (eg, subjects) of their content. Here, I compare the performance of four SML algorithms (decision trees, random forest, k-nearest neighbor, and support vector machines) to classify emails as spam or ham (ie, not spam). I also evaluate whether computer-interpretable content in emails (eg, headers) provides predictive value to spam vs ham classification.
+
+<br>
+
+## 2. Data source
+
+I downloaded "ham" and spam data files from <https://spamassassin.apache.org/old/publiccorpus/> and decompressed them on the command line.
+
+I used both "easy" and "hard" ham emails because I was curious to see the difference in classification performance.
+
+```{bash, eval=FALSE}
+# Easy ham
+bzip2 -d 20030228_easy_ham.tar.bz2
+tar -xvf 20030228_easy_ham.tar
+
+# Hard ham
+bzip2 -d 20030228_hard_ham.tar.bz2
+tar -xvf 20030228_hard_ham.tar
+
+# Spam
+bzip2 -d 20050311_spam_2.tar.bz2
+tar -xvf 20050311_spam_2.tar
+```
+
+I thought it would be a little cumbersome to load thousands of individual emails to my GitHub repository, so I read them into tibbles and then saved and uploaded the R data files.
+
+Create spam and ham tibbles.
+
+```{r load-easy-ham, warning=FALSE}
+# Note filepath is specific to my computer
+working_dir <- getwd()
+filepath <- paste(working_dir, "/Data/easy_ham", sep = "") 
+easy_ham_files <- readtext(filepath, encoding='UTF-8')
+```
+
+```{r load-hard-ham, warning=FALSE}
+filepath <- paste(working_dir, "/Data/hard_ham", sep = "") 
+hard_ham_files <- readtext(filepath, encoding='UTF-8')
+```
+
+```{r load-spam, warning=FALSE}
+filepath <- paste(working_dir, "/Data/spam_2", sep = "") 
+spam_files <- readtext(filepath, encoding='UTF-8')
+```
+
+Save the tibbles as R data files.
+
+```{r save-data}
+saveRDS(easy_ham_files, "easy_ham_files.rds")
+saveRDS(hard_ham_files, "hard_ham_files.rds")
+saveRDS(spam_files, "spam_files.rds")
+```
+
+These data files can be read from my GitHub repository to recreate the spam and ham tibbles.
+
+```{r read-rds-files}
+# Method from https://forum.posit.co/t/how-to-read-rds-files-hosted-at-github-repository/128561
+easy_ham_emails <- readRDS(gzcon(url("https://github.com/alexandersimon1/Data607/raw/main/Project4/easy_ham_files.rds")))
+hard_ham_emails <- readRDS(gzcon(url("https://github.com/alexandersimon1/Data607/raw/main/Project4/hard_ham_files.rds")))
+spam_emails <- readRDS(gzcon(url("https://github.com/alexandersimon1/Data607/raw/main/Project4/spam_files.rds")))
+```
+
+<br>
+
+## 3. Data checks and transformations
+
+### 3.1. Label the data
+
+First I labeled the ham and spam emails as "ham" and "spam" (as factors), respectively, and then combined everything into a single tibble. I also omitted the `doc_id` column since it isn't needed.
+
+```{r label-emails}
+# This function labels all emails in a tibble with the specified label (string),
+# and then returns the updated tibble of emails
+label_emails <- function (emails_df, label_text) {
+  emails_df <- emails_df %>%
+    select(text) %>%
+    mutate(
+      label = as.factor(label_text)
+    )
+  return(emails_df)
+}
+
+easy_ham_emails <- label_emails(easy_ham_emails, "ham")
+hard_ham_emails <- label_emails(hard_ham_emails, "ham")
+spam_emails <- label_emails(spam_emails, "spam")
+
+all_emails_easy <- rbind(easy_ham_emails, spam_emails)
+all_emails_hard <- rbind(hard_ham_emails, spam_emails)
+```
+
+<br>
+
+### 3.2. Check data balance
+
+Both datasets are imbalanced. The "easy" dataset has a higher proportion of ham emails than spam emails.
+
+```{r balance-easy-ham-vs-spam}
+table(all_emails_easy$label) %>% prop.table()
+```
+
+in contrast, the "hard" dataset has a much higher proportion of spam emails vs ham emails.
+
+```{r balance-hard-ham-vs-spam}
+table(all_emails_hard$label) %>% prop.table()
+```
+
+Ideally, these datasets should be balanced because imbalance can bias the prediction model toward the more common class (ie, the model is more likely to make predictions with high accuracy by simply selecting the most common class).[^1] Methods to balance data include undersampling (randomly select samples from the overrepresented class) and oversampling (randomly duplicate samples from the underrepresented class), which are implemented in the `caret` package. However, these procedures are out of scope for this assignment.
+
+[^1]: <https://shiring.github.io/machine_learning/2017/04/02/unbalanced>
+
+Below I construct models using the datasets as is (ie, unadjusted for balance). This starts with creating corpuses of the email text and document-term matrices. The code in sections 3.3 and 3.4 are adapted from a tutorial about the [`tm`](https://rpubs.com/tsholliger/301914) package.
+
+<br>
+
+### 3.3. Create corpus
+
+Create corpuses of email text
+
+```{r create-corpus}
+easy_email_corpus <- VCorpus(VectorSource(all_emails_easy$text))
+hard_email_corpus <- VCorpus(VectorSource(all_emails_hard$text))
+```
+
+As an example, the "easy" email corpus looks like this
+
+```{r view-corpus-head-before-tidy}
+# Print first 10 lines
+writeLines(head(strwrap(easy_email_corpus[[1]]), 10))
+```
+
+Remove punctuation and numbers, remove English stop words, change case to lowercase, and strip extra white space.
+
+```{r tidy-email-corpus-text}
+# This function cleans up a specified corpus by removing punctuation, numbers, stop words, and
+# white space, and changes all text to lowercase. It returns the tidied corpus.
+tidy_corpus <- function(corpus) {
+  corpus <- tm_map(corpus, removePunctuation)
+  corpus <- tm_map(corpus, removeNumbers)
+  corpus <- tm_map(corpus, removeWords, stopwords("english"))
+  corpus <- tm_map(corpus, content_transformer(tolower))
+  corpus <- tm_map(corpus, stripWhitespace)  
+}
+
+easy_email_corpus <- tidy_corpus(easy_email_corpus)
+hard_email_corpus <- tidy_corpus(hard_email_corpus)
+```
+
+Now the "easy" email corpus looks like this
+
+```{r view-corpus-head-after-tidy}
+writeLines(head(strwrap(easy_email_corpus[[1]]), 10))
+```
+
+<br>
+
+### 3.4. Create document term matrix
+
+Both the "easy" and "hard" email document term matrices are extremely sparse (\>99.5%).
+
+```{r create-easy-email-dtm}
+easy_email_dtm <- DocumentTermMatrix(easy_email_corpus)
+tm::inspect(easy_email_dtm)
+```
+
+```{r create-hard-email-dtm}
+hard_email_dtm <- DocumentTermMatrix(hard_email_corpus)
+tm::inspect(hard_email_dtm)
+```
+
+To prevent R from crashing due to lack of memory when constructing the models (I learned this the hard way), I simplified the document term matrices by removing terms that have \>95% sparsity (ie, occur in \<5% emails).
+
+The less sparse document term matrices look like this:
+
+```{r remove-sparse-terms-easy-dtm}
+easy_email_dtm <- removeSparseTerms(easy_email_dtm, 0.95)
+tm::inspect(easy_email_dtm)
+```
+
+```{r remove-sparse-terms-hard-dtm}
+hard_email_dtm <- removeSparseTerms(hard_email_dtm, 0.95)
+tm::inspect(hard_email_dtm)
+```
+
+<br>
+
+## 4. Supervised machine learning
+
+I did a lot of background reading to understand how to create supervised machine learning models for text classification such as spam/ham emails. The code below is adapted from what I learned.[^2]
+
+[^2]: Helpful references:
+
+    <https://bookdown.org/josephine_lukito/j381m_tutorial/sml-caret.html>
+
+    <https://cran.r-project.org/web/packages/caret/vignettes/caret.html>
+
+### 4.1. Partition the data
+
+I partitioned the labeled emails ("easy" and "hard") into training and test sets using a 70-30 split.
+
+```{r create-data-partition}
+trainIndex_easy <- createDataPartition(y = all_emails_easy$label, p = 0.7, list = FALSE)
+trainIndex_hard <- createDataPartition(y = all_emails_hard$label, p = 0.7, list = FALSE)
+```
+
+Next, split up the document-term matrices using the corresponding partition.
+
+```{r split-dtm}
+# "easy" dataset
+training_set_easy <- easy_email_dtm[trainIndex_easy, ] %>% as.matrix() %>% as.data.frame()
+test_set_easy <- easy_email_dtm[-trainIndex_easy, ] %>% as.matrix() %>% as.data.frame()
+# "hard" dataset
+training_set_hard <- hard_email_dtm[trainIndex_hard, ] %>% as.matrix() %>% as.data.frame()
+test_set_hard <- hard_email_dtm[-trainIndex_hard, ] %>% as.matrix() %>% as.data.frame()
+```
+
+Similarly, split up the email labels using the corresponding partition.
+
+```{r split-email-labels}
+# "easy" dataset
+training_labels_easy <- all_emails_easy$label[trainIndex_easy]
+test_labels_easy <- all_emails_easy$label[-trainIndex_easy]
+# "hard" dataset
+training_labels_hard <- all_emails_hard$label[trainIndex_hard]
+test_labels_hard <- all_emails_hard$label[-trainIndex_hard]
+```
+
+<br>
+
+### 4.2. Define resampling method
+
+I used a bootstrap resampling method.
+
+```{r define-resampling-method}
+resampling_method <- trainControl(method = "boot")
+```
+
+<br>
+
+### 4.3. Algorithms
+
+#### 4.3.1. Decision trees
+
+First, train the model for the "easy" dataset and the model for the "hard" dataset.
+
+```{r train-decision-tree-easy}
+dt_model_easy <- caret::train(x = training_set_easy, y = training_labels_easy, method = "rpart",
+                              trControl = resampling_method)
+
+print(dt_model_easy)
+```
+
+```{r train-decision-tree-hard}
+dt_model_hard <- caret::train(x = training_set_hard, y = training_labels_hard, method = "rpart",
+                              trControl = resampling_method)
+
+print(dt_model_hard)
+```
+
+Then evaluate the models on the corresponding test dataset.
+
+The summary statistics below show that the accuracy (95% CI) of the decision tree model with the "easy" dataset is 92.3% (90.62% - 93.76%). There are a couple of indicators that the model performs better than would be expected by chance alone.
+
+-   The accuracy is greater than the "[no information rate](https://stats.stackexchange.com/questions/280597/what-is-no-information-rate-algorithm)" (NIR; 64.16%) and the p-value of accuracy vs NIR is much less than 0.05, so the decision tree model performs significantly better than a naive classifier that classifies everything by the most common class.
+
+-   Kappa value $𝜅>0.8$. The [kappa value](https://en.wikipedia.org/wiki/Cohen%27s_kappa) is a measure of the degree of agreement between two raters that classify items into mutually exclusive categories. 𝜅 ranges from 0 (no agreement between the raters other than chance) to 1 (complete agreement and therefore unlikely due to chance). $𝜅 > 0.8$ indicates the agreement between the prediction and reference categories is strong and unlikely to be due to chance.
+
+```{r test-dt-prediction-easy}
+dt_predict_easy <- predict(dt_model_easy, newdata = test_set_easy)
+dt_easy_confusion_matrix <- caret::confusionMatrix(dt_predict_easy, test_labels_easy, 
+                                                   mode = "prec_recall")
+dt_easy_confusion_matrix
+```
+
+The confusion matrix can also be visualized by a "four-fold plot". This plot shows that the decision tree model does fairly well predicting true positives (upper left quadrant) and true negatives (lower right quadrant) in the "easy" dataset, which agrees with the 92.3% accuracy ((668 + 411)/(668 + 8 + 82 + 411)). Among the incorrect predictions, there are more false negatives (lower left quadrant) than false positives (upper right quadrant).
+
+```{r dt-predict-easy-ffplot}
+# Reference: https://www.geeksforgeeks.org/visualize-confusion-matrix-using-caret-package-in-r/
+fourfoldplot(as.table(dt_easy_confusion_matrix), color = c("#00BFC4", "#F8766D"))
+```
+
+For the "hard" dataset, the accuracy (95% CI) of the decision tree model is 92.51% (89.82%-94.67%), which is about the same as the accuracy for the "easy" dataset. The accuracy is greater than the NIR and the p-value of accuracy vs NIR is much less than 0.05, so the decision tree model for the hard dataset is also significantly better than a naive classifier.
+
+However, the difference between the accuracy and NIR (0.9251 - 0.8482 = 0.0769) is less than that for the easy dataset (0.9230 - 0.6416 = 0.2814), which suggests that the decision tree model is a better model for the easy dataset than the hard dataset. This is supported by lower kappa value ($0.6 \leq 𝜅 \leq 0.8$), which indicates only moderate agreement between the prediction and reference categories.
+
+```{r test-dt-prediction-hard}
+dt_predict_hard <- predict(dt_model_hard, newdata = test_set_hard)
+dt_hard_confusion_matrix <- caret::confusionMatrix(dt_predict_hard, test_labels_hard, 
+                                                   mode = "prec_recall")
+dt_hard_confusion_matrix
+```
+
+The four-fold plot of the confusion matrix for the hard dataset looks like this:
+
+```{r dt-predict-hard-ffplot}
+fourfoldplot(as.table(dt_hard_confusion_matrix), color = c("#00BFC4", "#F8766D"))
+```
+
+<br>
+
+#### 4.3.2. Random forest (RF)
+
+First, train the models for the easy and hard datasets.
+
+```{r train-random-forest-easy}
+rf_model_easy <- train(x = training_set_easy, y = training_labels_easy, method = "ranger",
+                       trControl = resampling_method,
+                       # hyperparameters
+                       tuneGrid = data.frame(
+                       # number of variables to randomly collect and split
+                       mtry = floor(sqrt(dim(training_set_easy)[2])),
+                       # rule for how to split the data as decisions are made
+                       splitrule = "extratrees",
+                       # tree depth, ie keep branching until it reaches minimum node size
+                       min.node.size = 5))
+
+print(rf_model_easy)
+```
+
+```{r train-random-forest-hard}
+rf_model_hard <- train(x = training_set_hard, y = training_labels_hard, method = "ranger",
+                       trControl = resampling_method,
+                       # hyperparameters
+                       tuneGrid = data.frame(
+                       # number of variables to randomly collect and split
+                       mtry = floor(sqrt(dim(training_set_hard)[2])),
+                       # rule for how to split the data as decisions are made
+                       splitrule = "extratrees",
+                       # tree depth, ie keep branching until it reaches minimum node size
+                       min.node.size = 5))
+
+print(rf_model_hard)
+```
+
+Then evaluate the models on the corresponding test dataset.
+
+The summary statistics below show that the accuracy (95% CI) of the random forest model for the "easy" dataset is 99.49% (98.89%-99.81%). This accuracy is greater than the NIR and the p-value of accuracy vs NIR is much less than 0.05, so the RF model performs significantly better than a naive classifier. In addition, 𝜅 is very close to 1, which means that the agreement between the prediction and reference categories is strong and highly unlikely to be due to chance.
+
+```{r test-rf-prediction-easy}
+rf_predict_easy <- predict(rf_model_easy, newdata = test_set_easy)
+rf_easy_confusion_matrix <- caret::confusionMatrix(rf_predict_easy, test_labels_easy, 
+                                                   mode = "prec_recall")
+rf_easy_confusion_matrix
+```
+
+The four-fold plot shows that the random forest model for the "easy" dataset" does extremely well predicting true positives (upper left quadrant) and true negatives (lower right quadrant), which agrees with the 99.49% accuracy ((749 + 414)/(749 + 5 + 1 + 414)). There are much fewer false negatives (lower left quadrant) and false positives (upper right quadrant) than that from the decision tree model, which increases the accuracy of the RF model.
+
+```{r rf-predict-easy-ffplot}
+fourfoldplot(as.table(rf_easy_confusion_matrix), color = c("#00BFC4", "#F8766D"))
+```
+
+The accuracy (95% CI) of the random forest model for the "hard" dataset is slightly lower, 95.75% (93.58%-97.35%). The lower accuracy vs the "easy" dataset suggests that the RF model is less susceptible to the imbalanced data than the decision tree model.
+
+Similar to the analysis of the decision tree model for easy and hard datasets, the difference between the accuracy and NIR (0.9575 - 0.8482 = 0.1093) with the RF model for the hard dataset is less than that for the easy dataset (0.9949 - 0.6416 = 0.3533), which suggests that the RF model is a better model for the easy dataset than the hard dataset. This is supported by $𝜅 = 0.8135$, which indicates only moderate agreement between the prediction and reference categories.
+
+```{r test-rf-prediction-hard}
+rf_predict_hard <- predict(rf_model_hard, newdata = test_set_hard)
+rf_hard_confusion_matrix <- caret::confusionMatrix(rf_predict_hard, test_labels_hard, 
+                                                   mode = "prec_recall")
+rf_hard_confusion_matrix
+```
+
+The four-fold plot of the confusion matrix for the hard dataset is shown below. Surprisingly, there were no false positives (upper right quadrant).
+
+```{r rf-predict-hard-ffplot}
+fourfoldplot(as.table(rf_hard_confusion_matrix), color = c("#00BFC4", "#F8766D"))
+```
+
+<br>
+
+#### 4.3.3. k-Nearest neighbor (kNN)
+
+First, train the models for the "easy" and "hard" datasets.
+
+```{r train-knn-easy}
+knn_model_easy <- train(x = training_set_easy, y = training_labels_easy, method = "knn", 
+                        trControl = resampling_method,
+                        # hyperparameter
+                        tuneGrid = data.frame(k = 2))
+
+print(knn_model_easy)
+```
+
+```{r train-knn-hard}
+knn_model_hard <- train(x = training_set_hard, y = training_labels_hard, method = "knn", 
+                        trControl = resampling_method,
+                        # hyperparameter
+                        tuneGrid = data.frame(k = 2))
+
+print(knn_model_hard)
+```
+
+Then evaluate the models on the corresponding test set.
+
+The summary statistics below show that the accuracy (95% CI) of the k-nearest neighbor model is 98.55% (97.68%-99.15%). This accuracy is greater than the NIR and the p-value of accuracy vs NIR is much less than 0.05, so the kNN model performs significantly better than a naive classifier. In addition, 𝜅 is very close to 1, which means that the agreement between the prediction and reference categories is strong and unlikely to be due to chance.
+
+```{r test-knn-prediction-easy}
+knn_predict_easy <- predict(knn_model_easy, newdata = test_set_easy)
+knn_easy_confusion_matrix <- caret::confusionMatrix(knn_predict_easy, test_labels_easy, 
+                                                    mode = "prec_recall")
+knn_easy_confusion_matrix
+```
+
+The four-fold plot of the kNN model confusion matrix for the "easy" dataset" is similar to that of the RF model for the "easy" dataset. The kNN model does very well predicting true positives (upper left quadrant) and true negatives (lower right quadrant), which agrees with the 98.55% accuracy ((748 + 404)/(748 + 15 + 2 + 404)). There were relatively few false negatives (lower left quadrant).
+
+```{r knn-predict-easy-ffplot}
+fourfoldplot(as.table(knn_easy_confusion_matrix), color = c("#00BFC4", "#F8766D"))
+```
+
+The accuracy (95% CI) of the kNN model for the "hard" dataset is a little lower, 94.13% (91.68%-96.03%). Similar to the RF model, the lower accuracy of the kNN model for the "hard" dataset vs the "easy" dataset suggests that the kNN model is less susceptible to the imbalanced data than the decision tree model.
+
+The difference between the accuracy and NIR (0.9413 - 0.8482 = 0.0931) with the kNN model for the hard dataset is less than that for the easy dataset (0.9855 - 0.6416 = 0.3439). This suggests that, like the RF model, the kNN model is a better model for the easy dataset than the hard dataset. This is supported by $0.6 \leq 𝜅 \leq 0.8$, which indicates only moderate agreement between the prediction and reference categories.
+
+```{r test-knn-prediction-hard}
+knn_predict_hard <- predict(knn_model_hard, newdata = test_set_hard)
+knn_hard_confusion_matrix <- caret::confusionMatrix(knn_predict_hard, test_labels_hard, 
+                                                    mode = "prec_recall")
+knn_hard_confusion_matrix
+```
+
+The four-fold plot of the confusion matrix for the hard dataset looks like this:
+
+```{r knn-predict-hard-ffplot}
+fourfoldplot(as.table(knn_hard_confusion_matrix), color = c("#00BFC4", "#F8766D"))
+```
+
+<br>
+
+#### 4.3.4. Support vector machine (SVM)
+
+First, train the models for the "easy" and "hard" datasets.
+
+```{r train-svm-easy}
+svm_model_easy <- train(x = training_set_easy, y = training_labels_easy, method = "svmLinear3", 
+                        trControl = resampling_method,
+                        # hyperparameters
+                        tuneGrid = data.frame(
+                        # cost for over-fitting
+                        cost = 1,
+                        # penalty for misclassifications
+                        Loss = 2))
+
+print(svm_model_easy)
+```
+
+```{r train-svm-hard}
+svm_model_hard <- train(x = training_set_hard, y = training_labels_hard, method = "svmLinear3", 
+                        trControl = resampling_method,
+                        # hyperparameters
+                        tuneGrid = data.frame(
+                        # cost for over-fitting
+                        cost = 1,
+                        # penalty for misclassifications
+                        Loss = 2))
+
+print(svm_model_hard)
+```
+
+Then evaluate the models on the corresponding test set.
+
+The summary statistics below show that the accuracy (95% CI) of the SVM model is 99.49% (98.89%-99.81%). This accuracy is greater than the NIR and the p-value of accuracy vs NIR is much less than 0.05, so the SVM model performs significantly better than a naive classifier. In addition, 𝜅 is very close to 1, which means that the agreement between the prediction and reference categories is strong and highly unlikely to be due to chance.
+
+```{r test-svm-prediction-easy}
+svm_predict_easy <- predict(svm_model_easy, newdata = test_set_easy)
+svm_easy_confusion_matrix <- caret::confusionMatrix(svm_predict_easy, test_labels_easy, 
+                                                    mode = "prec_recall")
+svm_easy_confusion_matrix
+```
+
+The four-fold plot looks very similar to the four-fold plot of the random forest confusion matrix. Like the RF model, the SVM model predicts true positives (upper left quadrant) and true negatives (lower right quadrant) extremely well, with few false negatives (lower left quadrant) or false positives (upper right quadrant).
+
+```{r svm-predict-easy-ffplot}
+fourfoldplot(as.table(svm_easy_confusion_matrix), color = c("#00BFC4", "#F8766D"))
+```
+
+The accuracy (95% CI) of the SVM model for the "hard" dataset is a little lower, 95.95% (93.82%-97.51%), but is still very good. The difference in accuracy between the easy and hard datasets was smaller for the SVM model (0.9949 - 0.9595 = 0.0354) than for the kNN model (0.9829 - 0.9312 = 0.0517), which suggests that the SVM model is less susceptible to imbalanced data.
+
+The difference between the accuracy and NIR (0.9595 - 0.8482 = 0.1113) with the SVM model for the hard dataset is less than that for the easy dataset (0.9949 - 0.6416 = 0.3533). This suggests that, like the RF and kNN models, the SVM model is a better model for the easy dataset than the hard dataset. Nevertheless, $𝜅>0.8$, which indicates strong agreement between the prediction and reference categories.
+
+```{r test-svm-prediction-hard}
+svm_predict_hard <- predict(svm_model_hard, newdata = test_set_hard)
+svm_hard_confusion_matrix <- caret::confusionMatrix(svm_predict_hard, test_labels_hard, 
+                                                    mode = "prec_recall")
+svm_hard_confusion_matrix
+```
+
+The four-fold plot of the confusion matrix for the hard dataset looks like this:
+
+```{r svm-predict-hard-ffplot}
+fourfoldplot(as.table(svm_hard_confusion_matrix), color = c("#00BFC4", "#F8766D"))
+```
+
+<br>
+
+### 4.4. Comparison of model performance
+
+The performance of the four SML models can be compared using resampling to estimate the distribution of the performance metrics (eg, accuracy).
+
+```{r resampling}
+models <- list(DT_easy = dt_model_easy, DT_hard = dt_model_hard,
+               RF_easy = rf_model_easy, RF_hard = rf_model_hard, 
+               KNN_easy = knn_model_easy, KNN_hard = knn_model_hard, 
+               SVM_easy = svm_model_easy, SVM_hard = svm_model_hard)
+resampling <- resamples(models)
+```
+
+The accuracy and kappa values of the resamples look like this:
+
+```{r resample-metrics}
+resampling_metrics_df <- resampling$values
+resampling_metrics_df
+```
+
+To plot these data, I first reshaped them to be in a long format and extracted the names of the performance metric, model, and difficulty of the dataset (easy/hard) for each resample.
+
+```{r reshape-resampling-values, message=FALSE}
+resampling_metrics_df <- resampling_metrics_df %>%
+  melt() %>%
+  rowwise() %>%
+  mutate(
+    metric = if_else(str_detect(variable, "Accuracy", negate = FALSE), "Accuracy", "Kappa"),
+    model = str_extract(variable, ".*(?=_)"),
+    # remove "~Accuracy" and "~Kappa" from variable names
+    variable = str_replace(variable, "~.*", ""),
+    difficulty = str_extract(variable, "(?<=_).*")    
+  )
+```
+
+The boxplots below show that, for the "easy" dataset, the SVM and RF models performed the best in terms of accuracy and 𝜅 value. However, for the "hard" dataset, the SVM model showed a greater difference from the RF model. Since real-world spam emails are likely to be "hard", these results suggest that the SVM model is the best classifier of ham vs spam emails.
+
+```{r compare-models, message=FALSE}
+ggplot(resampling_metrics_df, aes(x = model, y = value, color = model)) +
+  geom_boxplot() +
+  coord_flip() +
+  facet_grid(difficulty ~ metric, scales = "free_x") +
+  ylab("value") + xlab("model") +   
+  theme(
+    strip.text = element_text(face = "bold"),
+    axis.title = element_text(face = "bold"),
+    legend.position = "none"
+  )
+```
+
+<br>
+
+## 5. Comparison of computer- vs human-interpretable content on classification performance
+
+In this section, I only focus on the best-performing model (SVM) and the "hard" dataset.
+
+I took a slightly broader approach than comparing emails with or without headers because the subject line is meaningful to email recipients and usually (unless it's missing) gives a clue about the body of an email. So I call the subject + body "human-interpretable content", in contrast to the entire email, which is "computer-interpretable content".
+
+### 5.1 Extract human-interpretable content
+
+Removing the email headers with regular expressions proved to be challenging (dead ends not shown), so I made a simplifying assumption that email headers are separated from the main body by a blank line. After dividing these two parts, I extracted the subject line from the header part and stripped HTML markup from the body part. Finally, I concatenated the subject and cleaned the message body to form the human-interpretable content.
+
+```{r extract-email-content-for-humans}
+human_content <- all_emails_hard %>%
+rowwise() %>%
+mutate(
+    # Add a dummy newline character to end of email text
+    # The purpose of this is to enable extraction of the subject line of blank emails
+    text = str_c(text, "\n", sep = ""),
+    # Capture subject line
+    subject = str_extract(text, "Subject: (.*)\n", group = 1),
+    # Email headers are separated from the body by a blank line, so the "body" is everything after
+    body = str_sub(text, str_locate(text, "[\n]{2,}")[2] + 1, str_length(text)),
+    # Remove URLs
+    body = str_replace_all(body, "http.*(\\n|\")", ""),
+    # Remove HTML tags
+    body = str_replace_all(body, "<[^>]*>", ""),    
+    # Remove special characters, eg &nbsp; = non-breaking whitespace
+    body = str_replace_all(body, "&#?[\\w|\\d]+;", ""),    
+    # Remove excess whitespace
+    body = str_replace_all(body, "[\\s]+", " "),
+    # Concatenate email subject and body
+    body = if_else(is.na(body) | body == " ", 
+                            subject,  # if no body, use subject as body
+                            str_c(subject, body, sep = " "))  # otherwise concatenate subject and body
+  ) %>%
+select(body, label)
+```
+
+A small fraction of emails did not contain human-interpretable content (as defined above). Because these messages are not useful for classification, I omitted them.
+
+```{r count-na}
+n_emails <- nrow(human_content)
+n_no_content <- sum(is.na(human_content$body))
+sprintf("%s of %s emails (%.3f%%) do not have human-interpretable content", n_no_content, n_emails, n_no_content / n_emails)
+```
+
+```{r drop-na}
+human_content <- human_content %>%
+  drop_na(body)
+```
+
+<br>
+
+### 5.2. Create corpus
+
+```{r create-corpus-human-emails}
+human_corpus <- VCorpus(VectorSource(human_content$body)) %>%
+  tidy_corpus()
+```
+
+<br>
+
+### 5.3. Create document term matrix
+
+```{r create-human-email-dtm}
+human_dtm <- DocumentTermMatrix(human_corpus) %>%
+  removeSparseTerms(., 0.95)
+tm::inspect(human_dtm)
+```
+
+<br>
+
+### 5.4. Partition data
+
+As before, I partitioned the emails into training and test sets using a 70-30 split.
+
+```{r create-human-data-partition}
+trainIndex_human <- createDataPartition(y = human_content$label, p = 0.7, list = FALSE)
+```
+
+```{r split-human-dtm}
+training_set_human <- human_dtm[trainIndex_human, ] %>% as.matrix() %>% as.data.frame()
+test_set_human <- human_dtm[-trainIndex_human, ] %>% as.matrix() %>% as.data.frame()
+```
+
+```{r split-human-labels}
+training_labels_human <- human_content$label[trainIndex_human]
+test_labels_human <- human_content$label[-trainIndex_human]
+```
+
+<br>
+
+### 5.5. Classification performance of SVM model with human-interpretable content
+
+Train the model
+
+```{r train-svm-human}
+svm_model_human <- train(x = training_set_human, y = training_labels_human, method = "svmLinear3", 
+                        trControl = resampling_method, tuneGrid = data.frame(cost = 1, Loss = 2))
+
+print(svm_model_human)
+```
+
+Evaluate the model on the test set
+
+The accuracy (95% CI) of the SVM model for the "human-interpretable" dataset is 93.67% (91.14%-95.56%) and $𝜅 = 0.7309$, which indicates moderate agreement between prediction and reference categories.
+
+```{r test-svm-prediction-human}
+svm_predict_human <- predict(svm_model_human, newdata = test_set_human)
+svm_human_confusion_matrix <- caret::confusionMatrix(svm_predict_human, test_labels_human, mode = "prec_recall")
+svm_human_confusion_matrix
+```
+
+<br>
+
+### 5.6. Comparison of SVM model performance with computer- vs human-interpretable content
+
+As before, resample to estimate the distribution of the performance metrics (eg, accuracy)
+
+```{r resampling-computer-human-content}
+models <- list(computer_content = svm_model_hard, human_content = svm_model_human)
+resampling <- resamples(models)
+```
+
+Then reshape the data
+
+```{r reshape-resampling-computer-human, message=FALSE}
+resampling_metrics_df <- resampling$values
+resampling_metrics_df <- resampling_metrics_df %>%
+  melt() %>%
+  rowwise() %>%
+  mutate(
+    metric = if_else(str_detect(variable, "Accuracy", negate = FALSE), "Accuracy", "Kappa"),
+    content_type = str_extract(variable, ".*(?=_)"),
+    # remove "~Accuracy" and "~Kappa" from variable names
+    variable = str_replace(variable, "~.*", ""),
+  )
+```
+
+The boxplots below show that the accuracy and kappa value of the SVM model for the "computer-interpretable" dataset is greater than the metrics for the human-interpretable dataset. Together, these findings indicate that computer-interpretable content in emails (eg, headers) provides predictive value to the SVM model for classifying ham vs spam.
+
+```{r compare-models2, message=FALSE}
+ggplot(resampling_metrics_df, aes(x = content_type, y = value, color = content_type)) +
+  geom_boxplot() +
+  coord_flip() +
+  facet_grid(~ metric, scales = "free_x") +
+  ylab("Value") + xlab("Content Type") +   
+  theme(
+    strip.text = element_text(face = "bold"),
+    axis.title = element_text(face = "bold"),
+    legend.position = "none"
+  )
+```
+
+<br>
+
+## 6. Conclusions and future directions
+
+These analyses show that supervised machine learning (SML) algorithms perform spam vs ham classification well—the four methods I compared (decision trees, random forest, k-nearest neighbor, and support vector machine) were significantly better than a naive classifier, had accuracy \>90%, and most had $𝜅 > 0.8$. In general, the algorithms performed better for the "easy" emails than the "hard" emails. Overall, the SVM model performed best for both types, which suggests that it would have the best performance in the "real world". Of note, the SVM performance was dependent on information from the entire email as shown by the reduced performance when email headers were excluded.
+
+Additional improvements in classification performance may be possible by balancing the spam and ham emails, fine tuning hyperparameters in SML algorithms, and using more advanced methods such as neural networks or large-language models.
