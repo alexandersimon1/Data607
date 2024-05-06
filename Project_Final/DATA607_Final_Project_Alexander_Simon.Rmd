@@ -26,7 +26,7 @@ library(kableExtra)
 
 ### 1.1. Project aim
 
-My overall goal was to learn more about recommender systems by obtaining, tidying, and exploring a ratings dataset and building and comparing the performance of different recommender algorithms using tools in the [recommenderlab](https://cran.r-project.org/web/packages/recommenderlab/index.html) R package.
+My overall goal was to learn more about recommender systems by obtaining, tidying, and exploring a ratings dataset, creating a recommender model, and comparing the performance of different recommender algorithms using tools in the [recommenderlab](https://cran.r-project.org/web/packages/recommenderlab/index.html) R package.
 
 <br>
 
