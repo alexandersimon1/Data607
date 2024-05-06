@@ -1,0 +1,962 @@
+---
+title: "DATA607 Final Project"
+author: "Alexander Simon"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    code_folding: hide
+    toc: true
+    toc_float: true
+    toc_depth: 3
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+set.seed(1023)
+
+if (!"recommenderlab" %in% rownames(installed.packages())) {
+  install.packages("recommenderlab")
+}
+library(recommenderlab)
+library(tidyverse)
+library(kableExtra)
+```
+
+## 1. Introduction
+
+### 1.1. Project aim
+
+My overall goal was to learn more about recommender systems by obtaining, tidying, and exploring a ratings dataset and building and comparing the performance of different recommender algorithms using tools in the [recommenderlab](https://cran.r-project.org/web/packages/recommenderlab/index.html) R package.
+
+<br>
+
+### 1.2. Challenges and pivots
+
+#### 1.2.1. Finding data
+
+I had originally proposed to obtain restaurant rating data from two sources, namely the [Yelp Open Dataset](https://www.yelp.com/dataset) that I worked with in Assignment 10 and ratings scraped from the [OpenTable](http://www.opentable.com/) restaurant reservation website. However, I ran into problems with both sources and ultimately neither was suitable for my project needs.
+
+-   I discovered that reviews and ratings in the Yelp Open Dataset only have review IDs, not user IDs. Every review has a unique ID, so even if I considered each review ID as a user, no user would have rated more than one restaurant. This resulted in an extremely sparse rating matrix unlike other recommender model datasets described in `recommenderlab` and elsewhere. Furthermore, it prevented me from performing data preparation tasks such as removing users who only rated a few items.
+
+-   After developing a working R script for scraping ratings from the OpenTable website, it suddenly stopped working. I discovered that the OpenTable website is dynamic and changes several times a day (ie, to recommend different restaurants for breakfast, lunch, dinner), each with a different layout and underlying code. After consultation with my instructor, I decided that this website was not suitable for scraping. Although there are tools to scrape data in these circumstances, such as the [Selenium](https://cran.r-project.org/web/packages/RSelenium/index.html) web driver (which could have been a project of its own), this was not my desired learning goal.
+
+Because of these issues, I decided to instead work with movie ratings from [MovieLens](https://movielens.org/), which is a non-commercial movie recommendation website that has been used to develop other movie recommender systems.
+
+<br>
+
+#### 1.2.2. Using `recommenderlab`
+
+I discovered that some functions in the `recommenderlab` tutorial[^1] that I used as a reference have either been deprecated since the book was published in 2015 (eg, `qplot`) or did not work on my computer (eg, `rowCount`, `colCount`) for reasons that I couldn't figure out. I was able to work around these issues using Tidyverse functions; however, this resulted in some differences between how I explored the data and created and evaluated the recommender models versus how the authors explained in the tutorial. For example, the authors construct the rating matrix and then use `rowCount` and `colCount` to select users and movies that met certain criteria to reduce bias in the models, but I performed these steps using Tidyverse functions before constructing the rating matrix.
+
+[^1]: Gorakala SK and Usuelli M. 2015. *Building a recommendation system with R*. 2015. Packt Publishing. Downloaded from Baruch College library.
+
+<br>
+
+## 2. Data
+
+### 2.1. Source
+
+I downloaded movie ratings data from [MovieLens](https://grouplens.org/datasets/movielens/), specifically the version of the latest dataset (2018) recommended for education and development. The dataset included two CSV files, `ratings.csv` (user ratings and movie IDs) and `movies.csv` (movie IDs and titles). I saved these files to my GitHub repository.
+
+<br>
+
+### 2.2. Input
+
+I read each CSV file into a dataframe.
+
+```{r read-raw-data}
+movie_ratings <- read_csv('https://media.githubusercontent.com/media/alexandersimon1/Data607/main/Project_Final/ratings.csv', show_col_types = FALSE)
+
+movie_titles <- read_csv('https://media.githubusercontent.com/media/alexandersimon1/Data607/main/Project_Final/movies.csv', show_col_types = FALSE)
+```
+
+<br>
+
+### 2.3. Checks and transformations
+
+#### 2.3.1. Data structure and types
+
+The `movie_ratings` dataframe has 100,836 rows (users) and 4 columns. The data types look appropriate.
+
+```{r movie-ratings-df}
+glimpse(movie_ratings)
+```
+
+The `movie_titles` dataframe has 9742 rows (movies) and 3 columns. The data types look appropriate; however, the title and genres columns are not tidy.
+
+```{r movie-titles-df}
+glimpse(movie_titles)
+```
+
+<br>
+
+#### 2.3.2. Select relevant columns in `movie_ratings` dataframe
+
+The `timestamp` column isn't needed, so I removed it. I also renamed the columns to be a little more descriptive.
+
+```{r select-columns}
+movie_ratings <- movie_ratings %>%
+  select(user_ID = userId, movie_ID = movieId, movie_rating = rating)
+```
+
+<br>
+
+#### 2.3.3. Create named vectors
+
+Before tidying the `movie_titles` dataframe, I created named vectors to associate movie IDs with their title and genres. These vectors are used to look up the title or genre of a movie given its ID.
+
+```{r create-named-vectors}
+get_movie_genre_by_ID <- setNames(movie_titles$genres, movie_titles$movieId)
+get_movie_title_by_ID <- setNames(movie_titles$title, movie_titles$movieId)
+```
+
+<br>
+
+#### 2.3.4. Tidy `movie_titles` dataframe
+
+#### `title` column
+
+The `title` column contains both the movie title and release year, so I separated the year and title into individual columns. Note that I changed the year to a numeric data type to facilitate subsequent numeric analyses on this variable (section 3).
+
+```{r extract-movie-year}
+title_includes_year <- function(title) {
+  # This function checks whether there is a year in the movie title
+  # It returns a logical value
+  return(str_detect(title, "\\("))
+}
+
+movie_titles <- movie_titles %>%
+  mutate(
+    year = if_else(title_includes_year(title),  # if year present
+                   as.numeric(str_extract(title, "(?<=\\()\\d{4}")),  # extract year
+                   NA),  # otherwise null
+    title = if_else(title_includes_year(title),  # if year present
+                    str_extract(title, ".*(?= \\()"),  # extract title
+                    title),  # otherwise keep title
+    .before = genres
+  ) %>%
+  filter(year > 1870)  # no movies were created before 1870
+```
+
+<br>
+
+#### `genres` column
+
+The `genres` column contained strings with multiple genres, so I first split it by the delimiter.
+
+```{r split-genres}
+movie_titles <- movie_titles %>%
+  rowwise() %>%
+  mutate(
+    genres = str_split(genres, "\\|")      
+  )
+```
+
+These are the unique elements in the `genres` column:
+
+```{r get-unique-genres}
+genres_all <- unique(unlist(movie_titles$genres))
+genres_all
+```
+
+The last element is not a genre, so I removed it.
+
+```{r remove-no-genre}
+genres_all <- head(genres_all, -1)
+genres_all
+```
+
+Next, I created individual columns for each genre and then assigned the value of each movie-genre (row-column) to either 1 (movie is in genre) or 0 (movie is not in genre).
+
+```{r add-genre-columns}
+# Add a new column for each genre, initialize with 0
+# https://stackoverflow.com/questions/75734046/add-columns-to-a-tibble-from-a-list-of-names
+movie_titles[genres_all] <- 0
+
+# For each movie, populate the genre columns
+# This is done by checking whether the column name (among the genre columns) is found in a movie's genres
+# grepl() returns a logical vector and since only 1 column is checked at a time
+# sum (grepl()) is either 1 or 0
+movie_titles <- movie_titles %>%
+  rowwise() %>%
+  mutate(
+    across(
+      # columns = first element of genres_all to last element
+      .cols = c(first(genres_all) : last(genres_all)),
+      .fns = ~ sum(grepl(cur_column(), genres))
+    )
+  ) %>%
+  select(-genres)  # remove 'genres' column
+```
+
+Now the `movie_titles` dataframe looks like this:
+
+```{r inspect-movie-titles-df}
+head(movie_titles, 10) %>%
+  kbl() %>%
+  kable_material() %>%
+  scroll_box("500px")
+```
+
+<br>
+
+#### 2.3.5. Duplicate rows
+
+There were no duplicate rows in either dataframe.
+
+```{r dup-rows-ratings}
+duplicate_rows <- nrow(movie_ratings) - nrow(distinct(movie_ratings))
+sprintf("Duplicate rows in movie_ratings: %d", duplicate_rows)
+```
+
+```{r dup-rows-titles}
+duplicate_rows <- nrow(movie_titles) - nrow(distinct(movie_titles))
+sprintf("Duplicate rows in movie_titles: %d", duplicate_rows)
+```
+
+<br>
+
+#### 2.3.6. Missing values
+
+There were no missing values in any columns in either dataframe.
+
+```{r find-na-columns}
+get_na_columns <- function(df) {
+  # count NAs in all columns
+  na_columns <- map(df, ~ sum(is.na(.))) %>%
+    # only keep columns that have NAs
+    keep(~ .x > 0)
+  
+  if (length(na_columns) == 0) {  # if the list is empty
+    return("There are no columns with missing values")
+  }
+  return(na_columns)
+}
+```
+
+```{r check-na-ratings}
+get_na_columns(movie_ratings)
+```
+
+```{r check-na-titles}
+get_na_columns(movie_titles)
+```
+
+<br>
+
+## 3. Exploratory data analyses
+
+### 3.1. Number of movies by release year
+
+The dataset has movies from 1902 to 2018.
+
+```{r n-movies-per-year}
+movies_per_year <- movie_titles %>%
+  group_by(year) %>%
+  summarise(
+    n_movies = n()
+  )
+
+sprintf("The dataset has movies from %d to %d", 
+        min(movies_per_year$year, na.rm = TRUE), max(movies_per_year$year, na.rm = TRUE))
+```
+
+Overall, the dataset contains more recent movies than old movies.
+
+```{r n-movies-per-year-barplot, warning=FALSE}
+ggplot(movies_per_year, aes(x = year, y = n_movies)) +
+  geom_col() +
+  xlim(1900, 2020) +
+  xlab("Release year") + ylab("Number of movies") +
+  theme(axis.title = element_text(face = "bold"))
+```
+
+<br>
+
+### 3.2. Number of movies rated in each genre
+
+The most frequently rated movie genres are dramas and comedies. The least frequent is film-noir.
+
+```{r movies-rated-by-genre}
+genre_totals <- movie_titles %>%
+  select(c(first(genres_all) : last(genres_all))) %>%
+  map_dbl(sum) %>%  # number of movies rated is column sum
+  as.data.frame() %>%
+  rename(total = '.')
+```
+
+```{r movies-rated-by-genre-barplot}
+ggplot(genre_totals, aes(x = reorder(rownames(genre_totals), total), y = total)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  ylab("Number of movies rated") + xlab("Genre") +
+  theme(axis.title = element_text(face = "bold"))
+```
+
+<br>
+
+### 3.3. Number of movies rated per user
+
+Users rated between 20 and 2698 movies, with a median of approximately 70 movies.
+
+```{r movies-rated-per-user-summary}
+n_movies <- movie_ratings %>%
+  group_by(user_ID) %>%
+  summarise(
+    n = n()
+  ) %>%
+  arrange(desc(n))
+  
+n_movies_summary <- summary(n_movies$n)
+n_movies_summary
+```
+
+The distribution is unimodal and right-skewed. The majority of users rated \<500 movies. A small subset of users rated \>1000 movies.
+
+```{r movies-rated-per-user-histogram}
+ggplot(n_movies, aes(x = n)) +
+  geom_histogram(binwidth = 50) +
+  scale_x_continuous(breaks = seq(0, 2700, 500)) +
+  xlab("Number of movies rated") + ylab("Count") +
+  theme(axis.title = element_text(face = "bold"))
+```
+
+<br>
+
+### 3.4. Number of users (reviewers) per movie
+
+Movies were rated by 1 to 329 users, with a median of 3 users.
+
+```{r users-per-movie-summary}
+n_users <- movie_ratings %>%
+  group_by(movie_ID) %>%
+  summarise(
+    n = n()
+  ) %>%
+  arrange(desc(n))
+
+n_users_summary <- summary(n_users$n)
+n_users_summary
+```
+
+The distribution is unimodal and right-skewed. Most movies were rated by only a few users, but some were rated by many users.
+
+```{r users-per-movie-histogram}
+ggplot(n_users, aes(x = n)) +
+  geom_histogram(binwidth = 5) +
+  scale_x_continuous(breaks = seq(0, 350, 50)) +
+  xlab("Number of users") + ylab("Count") +
+  theme(axis.title = element_text(face = "bold"))
+```
+
+```{r users-per-movie-boxplot}
+ggplot(n_users, aes(x = n)) +
+  geom_boxplot() +
+  scale_x_continuous(breaks = seq(0, 350, 50)) +  
+  xlab("Number of users") + ylab("Count") +
+  theme(axis.title = element_text(face = "bold"))  
+```
+
+The movies with the most users are
+
+```{r movies-with-most-users}
+head(n_users) %>%
+  mutate(
+    movie_title = unname(get_movie_title_by_ID[movie_ID]),
+    .after = movie_ID
+  ) %>%
+  kbl() %>%
+  kable_material()
+```
+
+<br>
+
+### 3.5. Proportion of user ratings that are for popular movies
+
+First, I defined movies that had 100 or more ratings as "popular".
+
+```{r define-popular-movies}
+popular_movies <- n_users %>%
+  filter(n >= 100)
+```
+
+Then I calculated the proportion of ratings for each user that are for these popular movies.
+
+```{r users-ratings-popular}
+# Note the code below is divided into two parts to create a dataframe for a later analysis
+movie_ratings_popular <- movie_ratings %>%
+  rowwise() %>%
+  mutate(
+    movie_is_popular = if_else(movie_ID %in% popular_movies$movie_ID, 1, 0)
+  )
+
+user_ratings_popular <- movie_ratings_popular %>%
+  group_by(user_ID) %>%
+  summarise(
+    n_ratings = n(),
+    n_popular = sum(movie_is_popular),
+    prop_ratings_popular = round(n_popular / n_ratings, 3)
+  )
+```
+
+The plot below shows that popular movies comprise less than half of most users' total ratings. However, some users primarily rated popular movies (ie, \>75% of their ratings).
+
+```{r sers-ratings-popular-barplot}
+ggplot(user_ratings_popular, aes(x = prop_ratings_popular)) + 
+  geom_histogram(binwidth = 0.025, color = "darkgrey", fill = "white") +
+  geom_density() +
+  xlab("Proportion of user ratings that are popular movies") + ylab("Count") +
+  theme(axis.title = element_text(face = "bold"))  
+```
+
+<br>
+
+### 3.6. Distribution of ratings
+
+Overall, the most common rating is 4.0 and there are more ratings \>3 than \<3.
+
+```{r ratings-barplot}
+ggplot(movie_ratings, aes(x = movie_rating)) + 
+  geom_bar() +
+  ylim(0, 30000) +
+  xlab("Rating") + ylab("Count") +
+  theme(axis.title = element_text(face = "bold"))
+```
+
+<br>
+
+### 3.7. Global mean rating
+
+The mean rating for all movies in the dataset is 3.5.
+
+```{r global-mean-rating}
+global_mean_rating <- movie_ratings %>%
+  summarise(
+    mean_rating = round(mean(movie_rating), 2)
+  ) %>%
+  as.numeric()
+
+global_mean_rating
+```
+
+The mean rating for all popular movies (as defined in section 3.5) is a little higher (3.86).
+
+```{r popular-mean-rating}
+movie_ratings_popular %>%
+  ungroup() %>%
+  filter(movie_is_popular == 1) %>%
+  summarise(
+    mean_rating = round(mean(movie_rating), 2)
+  ) %>%
+  as.numeric()
+```
+
+<br>
+
+### 3.8. Difference of average genre ratings from global mean rating
+
+First I added the genre for each movie rating and then expanded each genre into its own column.
+
+```{r add-movie-rating-genre}
+# Add genres for each rated movie
+movie_ratings_genre <- movie_ratings %>%
+  mutate(
+    genres = unname(get_movie_genre_by_ID[movie_ID])
+  )
+
+# Create genre columns
+movie_ratings_genre[genres_all] <- 0
+
+# Populate genre columns
+movie_ratings_genre <- movie_ratings_genre %>%
+  rowwise() %>%
+  mutate(
+    across(
+      .cols = c(first(genres_all) : last(genres_all)),
+      .fns = ~ sum(grepl(cur_column(), genres))
+    )
+  ) %>%
+  select(-genres)  # drop 'genres' column
+```
+
+Since each genre column contains binary values, the mean rating in each genre is the product of the `genre` and `movie_rating` columns (sum of all ratings in the genre) divided by the sum of the `genre` column (number of ratings in the genre), ie
+
+$$
+mean\ rating = \frac{\sum ratings\ of\ rated\ movies\ in\ genre}{n_{ratings\ in\ genre}} = \frac{movie\_rating \times genre}{\sum genre}
+$$
+
+There may be a more "elegant" way of doing this, but I calculated this in 3 steps (numerator, denominator, division).
+
+First the numerator
+
+```{r avg-rating-by-genre-numerator}
+movie_ratings_genre_numerator <- movie_ratings_genre %>%
+  rowwise() %>%
+  mutate(
+    across(
+      .cols = c(first(genres_all) : last(genres_all)),
+      .fns = ~ .x * movie_rating,  # column product
+      .names = "{col}_product"
+    )    
+  ) %>%
+  select(ends_with("_product")) %>%
+  map_dbl(sum) %>%  # sum of product columns
+  as.data.frame() %>%
+  rename(numerator = '.')  
+```
+
+Then the denominator
+
+```{r avg-rating-by-genre-denominator}
+movie_ratings_genre_denominator <- movie_ratings_genre %>%
+  select(c(first(genres_all) : last(genres_all))) %>%
+  map_dbl(sum) %>%  # sum of genre columns
+  as.data.frame() %>%
+  rename(denominator = '.')
+```
+
+Finally, divide the numerators by the denominators to calculate the mean ratings for each genre and subtract the global mean rating.
+
+```{r avg-rating-by-genre4}
+genre_avg_rating <- tibble(genre = genres_all,
+                           numerator = movie_ratings_genre_numerator$numerator,
+                           denominator = movie_ratings_genre_denominator$denominator)
+
+genre_avg_rating <- genre_avg_rating %>%
+  mutate(
+    avg_rating = round(numerator / denominator, 2),
+    diff_global_mean = avg_rating - global_mean_rating
+  ) %>%
+  select(genre, avg_rating, diff_global_mean)
+```
+
+Overall, average ratings across genres were similar and differed from the global mean by \<0.4 in either direction. Average ratings for film-noir movies were the highest above the global mean, while average ratings for musicals were the lowest below the global mean. Average ratings for thrillers, comedies, and action movies equaled the global mean. This suggests that users who rate film-noir movies and musicals are somewhat more biased than average and that users who rate thrillers, comedies, and action movies are the least biased.
+
+```{r avg-rating-by-genre-barplot}
+ggplot(genre_avg_rating, aes(x = reorder(factor(genre), diff_global_mean), 
+                             y = diff_global_mean,
+                             fill = sign(diff_global_mean))) +
+  geom_bar(stat = "identity") +
+  geom_hline(yintercept = 0, color = "darkgray") +
+  coord_flip() +
+  ylim(-0.4, 0.4) +
+  ylab("Difference of average rating from global mean") + xlab("Genre") +
+  theme(
+    axis.title = element_text(face = "bold"),
+    legend.position = "none"
+  )
+```
+
+<br>
+
+## 4. Create rating matrix
+
+### 4.1. Selecting the most relevant data
+
+Users who have only rated a few movies and movies that have only been rated a few times may bias the recommendation model, so I removed these users and movies from the `movie_ratings` dataframe.
+
+#### 4.1.1. Remove users who only rated a few movies
+
+First I identified the users who rated fewer movies than the median number of movies rated per user, which I determined in section 3.3.
+
+```{r identify-users-few-ratings}
+median_movies_user <- as.numeric(n_movies_summary[3])  # median from summary table
+users_few_ratings <- n_movies %>%
+  filter(n < median_movies_user)
+```
+
+Then I performed an anti-join between this dataframe and the `movie_ratings` dataframe to only retain ratings from users who rated more movies than the median.
+
+```{r filter-ratings-users}
+movie_ratings2 <- anti_join(movie_ratings, users_few_ratings, by = join_by(user_ID))
+```
+
+<br>
+
+#### 4.1.2. Remove movies that have only been rated by a few users
+
+Similarly, I identified the movies that have fewer users than the median number of users per movie, which I determined in section 3.4.
+
+```{r identify-movies-few-users}
+median_users_movie <- as.numeric(n_users_summary[3])
+movies_few_users <- n_users %>%
+  filter(n < median_users_movie)
+```
+
+Then anti-join to only retain ratings from movies that had more ratings than the median.
+
+```{r filter-ratings-movies}
+movie_ratings2 <- anti_join(movie_ratings2, movies_few_users, by = join_by(movie_ID))
+```
+
+<br>
+
+### 4.2. Data transformations
+
+To create the rating matrix, I reshaped the `movie_ratings2` dataframe from long to wide format with user IDs as the rows, movie IDs (ie, items) as the columns, and movie ratings as the values.
+
+```{r reshape-ratings-wide}
+ratings_wide <- movie_ratings2 %>%
+  pivot_wider(
+    id_cols = user_ID,
+    names_from = movie_ID, 
+    values_from = movie_rating
+  )
+```
+
+Then I replaced all NAs with 0.
+
+```{r remove-cols-no-ratings}
+ratings_wide <- ratings_wide %>%
+  mutate_all(~ replace(., is.na(.), 0))
+```
+
+The proportion of values in the rating matrix that are zero (ie, sparsity) is approximately 95%.
+
+```{r rating-matrix-sparsity}
+ratings_sparsity <- sum(ratings_wide == 0) / prod(dim(ratings_wide))
+round(ratings_sparsity, 3)
+```
+
+Next, I extracted the user IDs, which will become the row names of the rating matrix, and deleted the `user_id` column since it is no longer needed.
+
+```{r row-names-vector}
+users_vec <- ratings_wide$user_ID
+ratings_wide <- ratings_wide[, -1]
+```
+
+<br>
+
+### 4.3. Create a "realRatingMatrix"
+
+Finally, I coerced the `ratings_wide` dataframe into a "realRatingMatrix" (a type of matrix used in `recommenderlab`), which has 305 rows and 4980 columns.
+
+```{r create-recommenderlab-rating-matrix}
+rating_matrix <- as.matrix(ratings_wide)
+rownames(rating_matrix) <- users_vec
+ratings_rrm <- as(rating_matrix, "realRatingMatrix")
+ratings_rrm
+```
+
+<br>
+
+## 5. Build and evaluate recommendation models
+
+### 5.1. Define training and test sets
+
+`recommenderlab` automatically normalizes data,[^2] so the first step in creating a recommendation model is to define training and test sets.
+
+[^2]: Normalization makes the average rating of each user 0. This prevents bias due to users who always rate movies very high or very low.
+
+```{r training-test-sets}
+which_train <- sample(x = c(TRUE, FALSE),
+                      size = nrow(ratings_rrm),
+                      replace = TRUE,
+                      prob = c(0.8, 0.2))
+training_set <- ratings_rrm[which_train, ]
+test_set <- ratings_rrm[!which_train, ]
+```
+
+<br>
+
+### 5.2. Build IBCF recommender model
+
+The first model I created was an item-based collaborative filtering (IBCF) recommender model. The code block below creates an IBCF model with k = 30 most similar items (movies) for each movie in the training set. Cosine similarity is used to assess similarity but is not specified because it is the default parameter.
+
+```{r build-IBCF-model}
+IBCF_model <- Recommender(data = training_set, method = "IBCF", parameter = list(k = 30))
+IBCF_model
+```
+
+<br>
+
+### 5.3. Exploring the IBCF recommender model
+
+A heatmap of the first 20 rows and columns of the IBCF model similarity matrix shows that it sparse. This is expected since each row only contains 30 similar items. Similarity is indicated by a grayscale gradient as shown on the right.
+
+```{r ibcf-similarity-matrix-heatmap}
+IBCF_model_details <- getModel(IBCF_model)
+image(IBCF_model_details$sim[1:20, 1:20], colorkey = TRUE)
+```
+
+Distribution of the number of elements by column
+
+```{r ibcf-similarity-matrix-colsums}
+col_sums <- colSums(IBCF_model_details$sim > 0)
+col_sums_df <- as.data.frame(col_sums)
+
+ggplot(col_sums_df, aes(x = col_sums)) +
+  geom_histogram(binwidth = 5)
+```
+
+Top 10 movies with the most elements in the similarity matrix (ie, movies that are similar to many other movies)
+
+```{r movies-most-similar-to-other-movies}
+movies_max_sim <- order(col_sums, decreasing = TRUE)[1:10]
+movies_max_sim <- as.data.frame(movies_max_sim) %>%
+  rename(movie_ID = movies_max_sim) %>%
+  mutate(
+    movie_title = unname(get_movie_title_by_ID[movie_ID])
+  )
+
+movies_max_sim %>%
+  kbl() %>%
+  kable_material()
+```
+
+<br>
+
+### 5.4. Apply the IBCF recommender model to users in the test set
+
+In the `recommenderlab` tutorial, the next step is to use the recommender model to predict the top *n* movie recommendations for users in the test set; however, I couldn't get the `predict()` function to generate any predictions using the IBCF model that was generated above.
+
+As shown by the output of the code below, there are no recommendations for user 1. Examination of the `IBCF_recommendations` object in the data viewer showed that there are no recommendations for any user.
+
+```{r predict-ibcf-recommendations}
+n_movies_recommend <- 10
+IBCF_recommendations <- predict(object = IBCF_model, newdata = test_set, 
+                                n = n_movies_recommend)
+IBCF_recommendations@items[[1]]
+```
+
+I'm not sure why this didn't work. However, I found another function in the `recommenderlab` package called `evaluationScheme()`, which generates predictions without any problem.
+
+```{r build-ibcf-model-method2}
+# recommenderlab tutorial, page 79
+# Define the evaluation scheme
+eval_scheme <- evaluationScheme(ratings_rrm, method = "split", train = 0.8, 
+                               given = 5, goodRating = 4)
+
+# Define training and test sets
+# Note that there are 2 types of test sets (known and unknown)
+eval_train <- getData(eval_scheme, "train")
+eval_known <- getData(eval_scheme, "known")
+eval_unknown <- getData(eval_scheme, "unknown")
+
+# Build the model from the training set
+IBCF_train <- Recommender(eval_train, "IBCF")
+
+# Make predictions using the known set
+IBCF_predictions <- predict(IBCF_train, eval_known, type = "ratings")
+```
+
+Then generate the top movie recommendations from the predictions. As an example, I show the top recommended movies and their genres for user 1.
+
+```{r ibcf-topn-recommendations}
+# recommenderlab tutorial, page 33
+# This function is not explained in the tutorial, but I found it in the list of available functions for realRatingMatrix objects
+IBCF_topn <- getTopNLists(IBCF_predictions)
+```
+
+```{r ibcf-topn-recommendations-user1}
+IBCF_topn_user1 <- as.data.frame(IBCF_topn@items[[1]])
+colnames(IBCF_topn_user1) <- "movie_ID"
+IBCF_topn_user1 <- IBCF_topn_user1 %>%
+  mutate(
+    title = unname(get_movie_title_by_ID[movie_ID]),
+    genres = str_replace_all(unname(get_movie_genre_by_ID[movie_ID]), "\\|", ", ")
+  )
+
+IBCF_topn_user1 %>%
+  kbl() %>%
+  kable_material()
+```
+
+<br>
+
+### 5.5. Comparing recommender models
+
+Recommender models can be evaluated by various metrics, such as the ability of the model to predict ratings or the "top N" movies (N is a number).
+
+<br>
+
+#### 5.5.1. Metrics to evaluate prediction of ratings
+
+Metrics for rating predictions include root mean square error (RMSE) and mean absolute error (MAE).[^3]
+
+[^3]: <https://towardsdatascience.com/evaluating-recommender-systems-root-means-squared-error-or-mean-absolute-error-1744abc2beac>
+
+-   **RMSE** - Standard deviation of the difference between actual and predicted ratings. The formula for RMSE squares residuals, so it magnifies large differences due to outliers (ie, bad predictions)
+
+-   **MAE** - Mean of the absolute difference between actual and predicted ratings. MAE weights all predictions equally, so it is less affected by outliers and is the preferred metric for overall comparison of recommender systems
+
+`recommenderlab` also reports another metric called mean squared error (MSE), which is $MSE = RMSE^2$ .
+
+The accuracy of the recommender model's prediction of ratings is assessed using the unknown subset of the test set.
+
+These are the metrics for the IBCF model:
+
+```{r IBCF-prediction-accuracy}
+# recommenderlab tutorial, page 88
+IBCF_accuracy <- calcPredictionAccuracy(IBCF_predictions, eval_unknown)
+IBCF_accuracy <- as.data.frame(IBCF_accuracy) %>%
+  mutate(
+    IBCF_accuracy = round(IBCF_accuracy, 3)
+  )
+IBCF_accuracy
+```
+
+These accuracy metrics are based on the difference between actual and predicted ratings, so lower values indicate better accuracy. But how low is good? To determine that, a benchmark is needed. For example, the performance of a recommendation model can be compared with a model that generates random recommendations (hereafter referred to as the "RANDOM" model) or with a model that only recommends the most popular items (hereafter referred to as the "POPULAR" model).
+
+In addition to these benchmark models, I compared the IBCF recommender model with two other models in the `recommenderlab` package:
+
+-   **user-based collaborative filtering (UBCF)** model - recommends items that are rated highly by similar users
+
+-   **singular value decomposition (SVD)** model - uses an algorithm that reduces the dimensionality (complexity) of the rating matrix[^4]
+
+[^4]: In mathematical terms, SVD is a matrix factorization technique that decomposes [singular values](https://en.wikipedia.org/wiki/Singular_value) of the rating matrix, hence the name "singular value decomposition". See [here](https://gregorygundersen.com/blog/2018/12/10/svd/) for a less mathematical explanation.
+
+```{r build-models}
+# UBCF
+UBCF_train <- Recommender(eval_train, "UBCF")
+UBCF_predictions <- predict(UBCF_train, eval_known, type = "ratings")
+
+# SVD
+SVD_train <- Recommender(eval_train, "SVD")
+SVD_predictions <- predict(SVD_train, eval_known, type = "ratings")
+
+# POPULAR
+POPULAR_train <- Recommender(eval_train, "POPULAR")
+POPULAR_predictions <- predict(POPULAR_train, eval_known, type = "ratings")
+
+# RANDOM
+RANDOM_train <- Recommender(eval_train, "RANDOM")
+RANDOM_predictions <- predict(RANDOM_train, eval_known, type = "ratings")
+```
+
+Comparison of all the metrics shows that all non-random models have much lower RMSE and MAE values than the random model. The accuracy of the UBCF and SVD models is about the same as the POPULAR model. The IBCF model had the lowest MAE but the RMSE was greater than that of the POPULAR model.
+
+```{r all-predictions-accuracy}
+all_models_accuracy <- rbind(
+  IBCF = calcPredictionAccuracy(IBCF_predictions, eval_unknown),
+  UBCF = calcPredictionAccuracy(UBCF_predictions, eval_unknown),
+  SVD = calcPredictionAccuracy(SVD_predictions, eval_unknown),  
+  POPULAR = calcPredictionAccuracy(POPULAR_predictions, eval_unknown),
+  RANDOM = calcPredictionAccuracy(RANDOM_predictions, eval_unknown)  
+)
+
+round(all_models_accuracy, digits = 3) %>%
+  kbl() %>%
+  kable_material()
+```
+
+<br>
+
+#### 5.5.2. Metrics to evaluate predictions of top N recommendations
+
+Metrics to evaluate top-N recommendation lists include true positive rate (TPR), false positive rate (FPR), [precision and recall](https://en.wikipedia.org/wiki/Precision_and_recallhttps://en.wikipedia.org/wiki/Precision_and_recall). In the context of recommender models, precision is the proportion of correctly recommended items among all recommended items and recall is the proportion of correctly recommended items among all useful recommendations.[^5]
+
+[^5]: Hahsler, page 12.
+
+During development, I compared two different similarity methods for IBCF and UBCF (cosine vs Pearson) and for the SVD and POPULAR models ("center" vs Z-score), but the results for each pair were nearly identical, so I only present the default similarity methods to avoid overcrowding the plots.
+
+```{r evaluate-models-topn}
+# recommenderlab tutorial, page 92
+models_to_evaluate <- list(
+  IBCF_cosine = list(name = "IBCF", param = list(method = "cosine")),
+  UBCF_cosine = list(name = "UBCF", param = list(method = "cosine")),
+  SVD_center = list(name = "SVD", param = list(normalize = "center")),
+  POPULAR_center = list(name = "POPULAR", param = list(normalize = "center")),
+  RANDOM = list(name = "RANDOM", param = NULL)
+)
+
+n_recommendations <- c(1, 5, seq(10, 100, 10))
+
+eval_results <- evaluate(eval_scheme, method = models_to_evaluate, n = n_recommendations)
+```
+
+Incidentally, the status messages above show that IBCF modeling is relatively slow compared with UBCF, SVD, and POPULAR and is the only model that takes longer 1 second total. The IBCF model spends more time on modeling than on prediction, but the opposite is true for the UBCF model. The SVD model spends more time on modeling but is more than an order of magnitude faster than IBCF, which isn't surprising since SVD reduces the complexity of the rating matrix. None of the computation times are significant, but for larger datasets, time would be a consideration in addition to model performance.
+
+Below is an example of what the performance metrics look like for the IBCF model with cosine similarity. Each model has 8 metrics: true positives (TP), false positives (FP), false negatives (FN), true negatives (TN), precision, recall, true positive rate (TPR), and false positive rate (FPR). The number of recommendations each model generated (n) is shown in the rightmost column (scroll right to view).
+
+```{r evaluate-models-topn-summary}
+# recommenderlab tutorial, page 93
+# Also from R documentation: avg function returns evaluation metrics averaged of cross-validation folds
+average_confusion_matrices <- lapply(eval_results, avg)
+average_confusion_matrices$IBCF_cosine %>%
+  kbl() %>%
+  kable_material() %>%
+  scroll_box("500px")
+```
+
+<br>
+
+### 5.6. Identifying the most suitable model
+
+The most suitable model is determined by comparing the performance of different variations of the recommender model and selecting the version with the best performance.
+
+<br>
+
+#### 5.6.1. Receiver-operator characteristic (ROC)
+
+An [ROC curve](https://en.wikipedia.org/wiki/Receiver_operating_characteristic) plots TPR vs FPR and the area under the curve (AUC) indicates how well the model fits the data (higher values are better). The plot below shows that the SVD and POPULAR models have the greatest AUC, which indicates that they have the best performance.[^6] The UBCF model also performs well. Of note, the IBCF model, which had the best metrics for predicting ratings, did not perform well for predicting top N movies as shown by the low AUC. Not surprisingly, the RANDOM model had the lowest AUC.
+
+[^6]: As far as I could tell, `recommenderlab` does not provide a way to calculate AUC, so AUC comparisons are by visual inspection. I was able to access the TPR and FPR data for the IBCF and UBCF models from their confusion matrices, which enabled computation of the AUC, but the SVD, POPULAR, and RANDOM models did not have confusion matrices. It wasn't clear to me where the TPR and FPR data for these models are stored and I couldn't find any information about this in the `recommenderlab` documentation.
+
+```{r plot-roc-curve}
+# recommenderlab tutorial page 94
+plot(eval_results, annotate = 1, legend = "topleft")
+```
+
+<br>
+
+#### 5.6.2. Precision-recall
+
+The plot below is consistent with the ROC curve and shows that the SVD and POPULAR models have the best overall performance. The UBCF model also performs well. The IBCF and RANDOM models were not able to reach high recall values, so they would be more likely to recommend irrelevant movies to users.
+
+```{r plot-precision-recall}
+# recommenderlab tutorial, page 95
+plot(eval_results, "prec/rec", annotate = 1, legend = "bottomright")
+```
+
+<br>
+
+#### 5.6.3. Optimizing numeric parameters
+
+Numeric parameters in recommendation models can be optimized using similar methods. For example, the IBCF model includes a parameter *k*, which specifies the number of most similar items (movies) to consider when generating the similarity matrix. To optimize *k*, we assess the effect of different values on ROC and precision-recall.
+
+```{r optimize-IBCF-parameter-k}
+# recommenderlab tutorial, page 95
+# Values of k to test
+k_vec <- c(5, 10, 20, 30, 40, 50)
+
+# Use lapply to apply values of k to each model
+models_to_evaluate <- lapply(k_vec, function(k) {
+  list(name = "IBCF", param = list(method = "cosine", k = k))
+})
+names(models_to_evaluate) <- paste0("IBCF_k_", k_vec)
+
+# Build and evaluate the models
+n_recommendations <- c(1, 5, seq(10, 100, 10))
+eval_results <- evaluate(eval_scheme, method = models_to_evaluate, n = n_recommendations)
+```
+
+The ROC curve below shows that k=50 has the largest AUC. However, even with this value, the TPR is only \~0.03, which is about an order of magnitude less than the highest TPR of the best-performing model (section 5.6.1), which reached \~0.25.
+
+```{r optimize-IBCF-parameter-k-roc}
+plot(eval_results, annotate = 1, legend = "topleft")
+```
+
+The precision-recall plot also shows that k=50 has the best performance.
+
+```{r optimize-IBCF-parameter-k-prec-rec}
+plot(eval_results, "prec/rec", annotate = 1, legend = "topright")
+```
+
+<br>
+
+## 6. Conclusions
+
+After overcoming some initial challenges, I successfully created and evaluated several different recommender models for a MovieLens movie ratings dataset. My analyses showed that the SVD and POPULAR recommender models had the best overall performance for these data. I was surprised that a model that only recommends the most popular items (movies) would have the best performance (or conversely, that the collaborative filtering and SVD models did not perform better than this baseline). This may be due to the ratings data that I used, which MovieLens created for education and development and may not reflect real-world user ratings. Model performance would also be expected to improve with a larger dataset; however, my project goal was primarily exploratory and I had to manage time constraints after selecting a new dataset for my project.
+
+Using the `recommenderlab` package was a good learning experience, but I feel that it is a little "clunky" and the tutorial needs to be updated. In the future, I would like to learn how to use other methods and tools for creating and evaluating recommender systems.
+
+<br>
+
+## 7. References
+
+Gorakala SK and Usuelli M. 2015. *Building a recommendation system with R*. 2015. Packt Publishing. Downloaded from Baruch College library.
+
+Hahsler M. 2014. *recommenderlab: Lab for Developing and Testing Recommender Algorithms*. <https://cran.r-project.org/web/packages/recommenderlab/vignettes/recommenderlab.pdf>
+
+Harper FM and Konstan JA. 2015. The MovieLens Datasets: History and Context. ACM Transactions on Interactive Intelligent Systems (TiiS) 5, 4: 19:1–19:19. <https://doi.org/10.1145/2827872>
