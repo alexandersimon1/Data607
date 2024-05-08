@@ -81,18 +81,6 @@ background-image: url("https://github.com/alexandersimon1/Data607/blob/main/Proj
 
 ---
 
-## Project goals
-
-- My primary goal was to learn more about recommender systems by creating and comparing recommender models using the recommenderlab R package
-
-- Unexpected issues
-  - Neither of my originally proposed datasets were suitable
-  - Some recommenderlab functions did not work, so I developed workarounds using Tidyverse
-  
-- As an extended goal, I also challenged myself to create this presentation in R
-
----
-
 ## Data source
 
 .pull-left[
@@ -352,13 +340,11 @@ ggplot(genre_avg_rating, aes(x = reorder(factor(genre), diff_global_mean),
 
 - .term[User-based collaborative filtering (UBCF)] - predicts ratings by aggregating ratings of users who have a similar rating history as the active user
 
-- .term[Singular value decomposition (SVD)] - a mathematical method of transforming the rating matrix to infer users with similar ratings <sup>1</sup>
+- .term[Singular value decomposition (SVD)] - a mathematical method of transforming the rating matrix to infer users with similar ratings
 
 - .term[Popular] - non-personalized algorithm that recommends the most popular items that users that not yet rated
 
 - .term[Random] - recommends random items, used as a baseline for evaluating model performance
-
-.footnote[.footnotesize[Hahsler M. 2014. recommenderlab: Lab for Developing and Testing Recommender Algorithms.]]
 
 ---
 

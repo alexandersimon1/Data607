@@ -2190,6 +2190,54 @@ padding-bottom: 50px;
 font-weight: bold;
 color: #136f63;
 }
+
+.slidenum {
+position: fixed;
+text-align: right;
+font-family: "Droid Serif";
+font-size: 14px;
+line-height: 0.7;
+right: 0;
+bottom: 0;
+padding-right: 50px;
+padding-bottom: 50px;
+}
+.term {
+font-weight: bold;
+color: #136f63;
+}
+
+.slidenum {
+position: fixed;
+text-align: right;
+font-family: "Droid Serif";
+font-size: 14px;
+line-height: 0.7;
+right: 0;
+bottom: 0;
+padding-right: 50px;
+padding-bottom: 50px;
+}
+.term {
+font-weight: bold;
+color: #136f63;
+}
+
+.slidenum {
+position: fixed;
+text-align: right;
+font-family: "Droid Serif";
+font-size: 14px;
+line-height: 0.7;
+right: 0;
+bottom: 0;
+padding-right: 50px;
+padding-bottom: 50px;
+}
+.term {
+font-weight: bold;
+color: #136f63;
+}
 </style>
   </head>
   <body>
@@ -2210,18 +2258,6 @@ background-image: url(&quot;data:image/png;base64,#https://github.com/alexanders
 .gold[Alexander Simon]
 
 .gold[2024-05-08]
-
----
-
-## Project goals
-
-- My primary goal was to learn more about recommender systems by creating and comparing recommender models using the recommenderlab R package
-
-- Unexpected issues
-  - Neither of my originally proposed datasets were suitable
-  - Some recommenderlab functions did not work, so I developed workarounds using Tidyverse
-  
-- As an extended goal, I also challenged myself to create this presentation in R
 
 ---
 
@@ -2370,13 +2406,11 @@ movie_titles &lt;- movie_titles %&gt;%
 
 - .term[User-based collaborative filtering (UBCF)] - predicts ratings by aggregating ratings of users who have a similar rating history as the active user
 
-- .term[Singular value decomposition (SVD)] - a mathematical method of transforming the rating matrix to infer users with similar ratings &lt;sup&gt;1&lt;/sup&gt;
+- .term[Singular value decomposition (SVD)] - a mathematical method of transforming the rating matrix to infer users with similar ratings
 
 - .term[Popular] - non-personalized algorithm that recommends the most popular items that users that not yet rated
 
 - .term[Random] - recommends random items, used as a baseline for evaluating model performance
-
-.footnote[.footnotesize[Hahsler M. 2014. recommenderlab: Lab for Developing and Testing Recommender Algorithms.]]
 
 ---
 
