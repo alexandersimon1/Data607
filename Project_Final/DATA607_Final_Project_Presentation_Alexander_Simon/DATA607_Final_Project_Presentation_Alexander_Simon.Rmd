@@ -91,10 +91,6 @@ background-image: url("https://github.com/alexandersimon1/Data607/blob/main/Proj
   
 - As an extended goal, I also challenged myself to create this presentation in R
 
-<div class="slidenum">
-<p> 1 </p>
-</div>
-
 ---
 
 ## Data source
@@ -114,18 +110,9 @@ background-image: url("https://github.com/alexandersimon1/Data607/blob/main/Proj
 
 ]
 
-<div class="slidenum">
-<p> 2 </p>
-</div>
-
 ---
 
-```{css, echo=FALSE}
-pre {
-  max-width: 100%;
-  overflow-x: scroll;  
-}
-```
+<!-- Note: The code below is the minimal code to reproduce the plots shown in the presentation. Please see project Rmarkdown file for full code. -->
 
 ```{r read-data, echo=FALSE}
 movie_ratings <- read_csv('https://media.githubusercontent.com/media/alexandersimon1/Data607/main/Project_Final/ratings.csv', show_col_types = FALSE)
@@ -197,10 +184,6 @@ movie_titles <- movie_titles %>%
   select(-genres)
 ```
 
-<div class="slidenum">
-<p> 3 </p>
-</div>
-
 ---
 
 ## Tidying the data (cont'd)
@@ -208,10 +191,6 @@ movie_titles <- movie_titles %>%
 ```{r inspect-movie-titles-df, echo=FALSE, highlight.output=c(3)}
 head(movie_titles, 10)
 ```
-
-<div class="slidenum">
-<p> 4 </p>
-</div>
 
 ---
 
@@ -262,10 +241,6 @@ ggplot(n_users, aes(x = n)) +
   theme(axis.title = element_text(face = "bold"))
 ```
 ]
-
-<div class="slidenum">
-<p> 5 </p>
-</div>
 
 ---
 
@@ -369,10 +344,6 @@ ggplot(genre_avg_rating, aes(x = reorder(factor(genre), diff_global_mean),
 ```
 ]
 
-<div class="slidenum">
-<p> 6 </p>
-</div>
-
 ---
 
 ## Recommender models in recommenderlab
@@ -388,10 +359,6 @@ ggplot(genre_avg_rating, aes(x = reorder(factor(genre), diff_global_mean),
 - .term[Random] - recommends random items, used as a baseline for evaluating model performance
 
 .footnote[.footnotesize[Hahsler M. 2014. recommenderlab: Lab for Developing and Testing Recommender Algorithms.]]
-
-<div class="slidenum">
-<p> 7 </p>
-</div>
 
 ---
 
@@ -432,7 +399,7 @@ ratings_wide <- ratings_wide[, -1]
 
 ## Build recommender model
 
-A rating matrix has user IDs as rows, movie IDs (ie, items) as columns, and movie ratings as values
+recommenderlab automatically normalizes the data, so the first step is to create a rating matrix, which has user IDs as rows, movie IDs (ie, items) as columns, and movie ratings as values
 
 ```{r create-recommenderlab-rating-matrix}
 rating_matrix <- as.matrix(ratings_wide)
@@ -459,10 +426,6 @@ IBCF_train <- Recommender(eval_train, "IBCF") #<<
 IBCF_predictions <- predict(IBCF_train, eval_known, type = "ratings")
 ```
 
-<div class="slidenum">
-<p> 8 </p>
-</div>
-
 ---
 
 ```{r ibcf-topn-recommendations, echo=FALSE}
@@ -484,10 +447,6 @@ IBCF_topn_user1 %>%
   knitr::kable(format = "html") %>%
   kableExtra::kable_styling(font_size = 16)
 ```
-
-<div class="slidenum">
-<p> 9 </p>
-</div>
 
 ---
 
@@ -537,15 +496,9 @@ round(all_models_accuracy, digits = 3) %>%
 ```
 ]
 
-<div class="slidenum">
-<p> 10 </p>
-</div>
-
 ---
 
-## Comparing models: evaluation of top recommendations
-
-```{r evaluate-models-topn, highlight.output=1:2}
+```{r evaluate-models-topn, include=FALSE, echo=FALSE}
 models_to_evaluate <- list(
   IBCF_cosine = list(name = "IBCF", param = list(method = "cosine")),
   UBCF_cosine = list(name = "UBCF", param = list(method = "cosine")),
@@ -557,13 +510,7 @@ n_recommendations <- c(1, 5, seq(10, 100, 10))
 eval_results <- evaluate(eval_scheme, method = models_to_evaluate, n = n_recommendations)
 ```
 
-<div class="slidenum">
-<p> 11 </p>
-</div>
-
----
-
-## Comparing models: evaluation of top recommendations (cont'd)
+## Comparing models: evaluation of top recommendations
 
 .pull-left[
 .center[
@@ -586,10 +533,6 @@ plot(eval_results, "prec/rec", annotate = 1, legend = "bottomright")
 - .term[Precision] is the proportion of correctly recommended items among all recommended items
 - .term[Recall] is the proportion of correctly recommended items among all useful recommendations
 
-<div class="slidenum">
-<p> 12 </p>
-</div>
-
 ---
 
 ## Conclusions
@@ -599,10 +542,6 @@ plot(eval_results, "prec/rec", annotate = 1, legend = "bottomright")
 - I was surprised that the collaborative filtering algorithms didn't perform better than the POPULAR model, but this may be because the MovieLens educational dataset is "idealized" and does not reflect real-world user ratings
 
 - Using recommenderlab was a good learning experience, but it feels a little clunky (eg, plots aren't ggplot quality) and some functions are deprecated or did not work
-
-<div class="slidenum">
-<p> 13 </p>
-</div>
 
 ---
 
@@ -618,9 +557,4 @@ Hill A. Meet xaringan: Making slides in R Markdown. 2019-01-16. https://arm.rbin
 
 Xie Y. Presentation Ninja with xaringan. 2016-12-12 (updated 2021-05-12). https://slides.yihui.org/xaringan/#1
 
-
-.green[MovieLens dataset available from https://grouplens.org/datasets/movielens/]
-
-<div class="slidenum">
-<p> 14 </p>
-</div>
+.green[The presentation is available at https://rpubs.com/alexandersimon1/final_project_presentation]
