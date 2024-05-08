@@ -1,0 +1,562 @@
+---
+title: "DATA607 Final Project + Presentation" 
+author: "Alexander Simon"
+date: "2024-05-08"
+output:
+  xaringan::moon_reader:
+    css: ["xaringan-themer.css", "mycss.css"]
+    seal: false
+    nature:
+      highlightLines: true
+    ratio: '16:9'
+---
+
+```{r setup, include=FALSE}
+options(htmltools.dir.version = FALSE)
+knitr::opts_chunk$set(warning = FALSE, message = FALSE, dpi = 300)
+set.seed(1023)
+
+if (!"recommenderlab" %in% rownames(installed.packages())) {
+  install.packages("recommenderlab")
+}
+library(recommenderlab)
+library(tidyverse)
+library(kableExtra)
+```
+
+```{r xaringan-themer, include=FALSE, warning=FALSE}
+# Adapted from https://pkg.garrickadenbuie.com/xaringanthemer/
+library(xaringanthemer)
+style_mono_accent(
+  base_color = "#23395b",
+  header_font_google = google_font("Open Sans"),
+  text_font_google   = google_font("Leto", "300", "300i"),
+  code_font_google   = google_font("Fira Mono"),
+  base_font_size = "20px",
+  text_font_size = "1.0rem",
+  header_h1_font_size = "0.8rem",  
+  code_font_size = "0.75rem",  
+  colors = c(
+    red = "#f34213",
+    blue = "#0a066b",
+    green = "#136f63")
+)
+
+extra_css <- list(
+  ".bottom" = list(
+    "position" = "fixed",
+    "text-align" = "right",
+    "font-family" = "\"Open Sans\"",
+    "line-height" = 0.7,
+    "right" = 0,
+    "bottom" = 0,
+    "padding-right" = "100px",
+    "padding-bottom" = "100px"
+    ),
+  ".term" = list(
+    "font-weight" = "bold",
+    "color" = "#136f63"
+    )
+  )
+
+style_extra_css(css = extra_css, outfile = "mycss.css")
+```
+
+
+class: title-slide
+
+ ## DATA607 Final Project
+### Creation and comparison of <br> movie recommender models <br> with the recommenderlab R package
+
+<div class="bottom">
+<p> Alexander Simon </p>
+<p> 2024-05-08 </p>
+<p> Presentation available on RPubs </p>
+</div>
+
+---
+
+## Project goals
+
+- My overall goal was to learn more about recommender systems by creating and comparing recommender models using the recommenderlab R package
+
+- Unexpected issues
+  - Neither of my originally proposed datasets were suitable
+  - Some recommenderlab functions did not work, so I developed workarounds using Tidyverse
+  
+- As an extended goal, I also challenged myself to create this presentation in R, which I've never done before
+
+---
+
+## Data source
+
+.pull-left[
+- MovieLens movie ratings dataset (2018 education & development version)
+  - ratings.csv (user ratings + movie IDs)
+  - movies.csv (movie IDs + titles + genres)
+  
+- 100,000 users
+
+- 10,000 movies
+]
+
+.pull-right[
+<img src = "https://github.com/alexandersimon1/Data607/blob/main/Project_Final/movielens.png?raw=true" />
+
+]
+
+---
+
+```{css, echo=FALSE}
+pre {
+  max-width: 100%;
+  overflow-x: scroll;  
+}
+```
+
+```{r read-data, echo=FALSE}
+movie_ratings <- read_csv('https://media.githubusercontent.com/media/alexandersimon1/Data607/main/Project_Final/ratings.csv', show_col_types = FALSE)
+
+movie_titles <- read_csv('https://media.githubusercontent.com/media/alexandersimon1/Data607/main/Project_Final/movies.csv', show_col_types = FALSE)
+```
+
+```{r select-columns, echo=FALSE}
+movie_ratings <- movie_ratings %>%
+  select(user_ID = userId, movie_ID = movieId, movie_rating = rating)
+```
+
+```{r create-named-vectors, echo=FALSE}
+get_movie_genre_by_ID <- setNames(movie_titles$genres, movie_titles$movieId)
+get_movie_title_by_ID <- setNames(movie_titles$title, movie_titles$movieId)
+```
+
+## Tidying the data
+
+```{r glimpse-titles, echo=FALSE, highlight.output=5}
+glimpse(movie_titles)
+```
+
+```{r extract-movie-year, echo=FALSE}
+title_includes_year <- function(title) {
+  # This function checks whether there is a year in the movie title
+  # It returns a logical value
+  return(str_detect(title, "\\("))
+}
+
+movie_titles <- movie_titles %>%
+  mutate(
+    year = if_else(title_includes_year(title),  # if year present
+                   as.numeric(str_extract(title, "(?<=\\()\\d{4}")),  # extract year
+                   NA),  # otherwise null
+    title = if_else(title_includes_year(title),  # if year present
+                    str_extract(title, ".*(?= \\()"),  # extract title
+                    title),  # otherwise keep title
+    .before = genres
+  ) %>%
+  filter(year > 1870)  # no movies were created before 1870
+```
+
+```{r split-genres, echo=FALSE}
+movie_titles <- movie_titles %>%
+  rowwise() %>%
+  mutate(
+    genres = str_split(genres, "\\|")      
+  )
+
+genres_all <- unique(unlist(movie_titles$genres))
+genres_all <- head(genres_all, -1)
+```
+
+```{r add-genre-columns}
+# Add a new column for each genre, initialize with 0
+movie_titles[genres_all] <- 0
+
+# For each movie, populate the genre columns
+# Check whether the column name is found in a movie's genres
+movie_titles <- movie_titles %>%
+  rowwise() %>%
+  mutate(
+    across(
+      .cols = c(first(genres_all) : last(genres_all)),
+      .fns = ~ sum(grepl(cur_column(), genres))
+    )
+  ) %>%
+  select(-genres)
+```
+
+---
+
+## Tidying the data (cont'd)
+
+```{r inspect-movie-titles-df, echo=FALSE, highlight.output=c(3)}
+head(movie_titles, 10)
+```
+
+---
+
+## Exploratory data analysis
+
+.pull-left[
+.green[Number of movies rated per user]
+```{r movies-rated-per-user-summary, echo=FALSE}
+n_movies <- movie_ratings %>%
+  group_by(user_ID) %>%
+  summarise(
+    n = n()
+  ) %>%
+  arrange(desc(n))
+  
+n_movies_summary <- summary(n_movies$n)
+n_movies_summary
+```
+
+```{r movies-rated-per-user-histogram, echo=FALSE}
+ggplot(n_movies, aes(x = n)) +
+  geom_histogram(binwidth = 50) +
+  scale_x_continuous(breaks = seq(0, 2700, 500)) +
+  xlab("Number of movies rated") + ylab("Count") +
+  theme(axis.title = element_text(face = "bold"))
+```
+]
+
+.pull-right[
+.green[Number of users per movie]
+```{r users-per-movie-summary, echo=FALSE}
+n_users <- movie_ratings %>%
+  group_by(movie_ID) %>%
+  summarise(
+    n = n()
+  ) %>%
+  arrange(desc(n))
+
+n_users_summary <- summary(n_users$n)
+n_users_summary
+```
+
+```{r users-per-movie-histogram, echo=FALSE}
+ggplot(n_users, aes(x = n)) +
+  geom_histogram(binwidth = 5) +
+  scale_x_continuous(breaks = seq(0, 350, 50)) +
+  xlab("Number of users") + ylab("Count") +
+  theme(axis.title = element_text(face = "bold"))
+```
+]
+
+---
+
+## Exploratory data analysis (cont'd)
+
+.pull-left[
+.center[.blue[Distribution of ratings]]
+```{r ratings-barplot, echo=FALSE, out.height='400 px'}
+ggplot(movie_ratings, aes(x = movie_rating)) + 
+  geom_bar() +
+  ylim(0, 30000) +
+  xlab("Rating") + ylab("Count") +
+  theme(axis.title = element_text(face = "bold"))
+```
+
+.center[.green[Global mean rating = 3.5]]
+]
+
+```{r global-mean-rating, echo=FALSE}
+global_mean_rating <- movie_ratings %>%
+  summarise(
+    mean_rating = round(mean(movie_rating), 2)
+  ) %>%
+  as.numeric()
+```
+
+```{r add-movie-rating-genre, echo=FALSE}
+# Add genres for each rated movie
+movie_ratings_genre <- movie_ratings %>%
+  mutate(
+    genres = unname(get_movie_genre_by_ID[movie_ID])
+  )
+
+# Create genre columns
+movie_ratings_genre[genres_all] <- 0
+
+# Populate genre columns
+movie_ratings_genre <- movie_ratings_genre %>%
+  rowwise() %>%
+  mutate(
+    across(
+      .cols = c(first(genres_all) : last(genres_all)),
+      .fns = ~ sum(grepl(cur_column(), genres))
+    )
+  ) %>%
+  select(-genres)
+```
+
+```{r avg-rating-by-genre-numerator, echo=FALSE}
+movie_ratings_genre_numerator <- movie_ratings_genre %>%
+  rowwise() %>%
+  mutate(
+    across(
+      .cols = c(first(genres_all) : last(genres_all)),
+      .fns = ~ .x * movie_rating,  # column product
+      .names = "{col}_product"
+    )    
+  ) %>%
+  select(ends_with("_product")) %>%
+  map_dbl(sum) %>%  # sum of product columns
+  as.data.frame() %>%
+  rename(numerator = '.') 
+```
+
+```{r avg-rating-by-genre-denominator, echo=FALSE}
+movie_ratings_genre_denominator <- movie_ratings_genre %>%
+  select(c(first(genres_all) : last(genres_all))) %>%
+  map_dbl(sum) %>%  # sum of genre columns
+  as.data.frame() %>%
+  rename(denominator = '.')
+```
+
+```{r avg-rating-by-genre-division, echo=FALSE}
+genre_avg_rating <- tibble(genre = genres_all,
+                           numerator = movie_ratings_genre_numerator$numerator,
+                           denominator = movie_ratings_genre_denominator$denominator)
+
+genre_avg_rating <- genre_avg_rating %>%
+  mutate(
+    avg_rating = round(numerator / denominator, 2),
+    diff_global_mean = avg_rating - global_mean_rating
+  ) %>%
+  select(genre, avg_rating, diff_global_mean)
+```
+
+.pull-right[
+.blue[Difference of average rating from global mean by genre]
+```{r avg-rating-by-genre-barplot, echo=FALSE, out.height='400 px', out.width='350 px'}
+ggplot(genre_avg_rating, aes(x = reorder(factor(genre), diff_global_mean), 
+                             y = diff_global_mean,
+                             fill = sign(diff_global_mean))) +
+  geom_bar(stat = "identity") +
+  geom_hline(yintercept = 0, color = "darkgray") +
+  coord_flip() +
+  ylim(-0.4, 0.4) +
+  ylab("Difference of average rating from global mean") + xlab("Genre") +
+  theme(
+    axis.title = element_text(face = "bold"),
+    legend.position = "none"
+  )
+```
+]
+
+---
+
+## Recommender models in recommenderlab
+
+- .term[Item-based collaborative filtering (IBCF)] - uses similarity between items based on user ratings to find items that are similar to items that the active user likes
+
+- .term[User-based collaborative filtering (UBCF)] - predicts ratings by aggregating ratings of users who have a similar rating history as the active user
+
+- .term[Singular value decomposition (SVD)] - a mathematical method of transforming the rating matrix to infer users with similar ratings <sup>1</sup>
+
+- .term[Popular] - non-personalized algorithm that recommends the most popular items that users that not yet rated
+
+- .term[Random] - recommends random items, used as a baseline for evaluating model performance
+
+.footnote[.footnotesize[Hahsler M. 2014. recommenderlab: Lab for Developing and Testing Recommender Algorithms.]]
+---
+
+```{r filter-ratings-users, echo=FALSE}
+median_movies_user <- as.numeric(n_movies_summary[3])  # median from summary table
+users_few_ratings <- n_movies %>%
+  filter(n < median_movies_user)
+
+movie_ratings2 <- anti_join(movie_ratings, users_few_ratings, by = join_by(user_ID))
+```
+
+```{r filter-ratings-movies, echo=FALSE}
+median_users_movie <- as.numeric(n_users_summary[3])
+movies_few_users <- n_users %>%
+  filter(n < median_users_movie)
+
+movie_ratings2 <- anti_join(movie_ratings2, movies_few_users, by = join_by(movie_ID))
+```
+
+```{r reshape-ratings-wide, echo=FALSE}
+ratings_wide <- movie_ratings2 %>%
+  pivot_wider(
+    id_cols = user_ID,
+    names_from = movie_ID, 
+    values_from = movie_rating
+  )
+```
+
+```{r remove-cols-no-ratings, echo=FALSE}
+ratings_wide <- ratings_wide %>%
+  mutate_all(~ replace(., is.na(.), 0))
+```
+
+```{r row-names-vecto, echo=FALSE}
+users_vec <- ratings_wide$user_ID
+ratings_wide <- ratings_wide[, -1]
+```
+
+## Build recommender model
+
+A rating matrix has user IDs as rows, movie IDs (ie, items) as columns, and movie ratings as values
+
+```{r create-recommenderlab-rating-matrix}
+rating_matrix <- as.matrix(ratings_wide)
+rownames(rating_matrix) <- users_vec
+ratings_rrm <- as(rating_matrix, "realRatingMatrix") #<<
+ratings_rrm
+```
+
+--
+
+```{r build-ibcf-model}
+# Define the evaluation scheme
+eval_scheme <- evaluationScheme(ratings_rrm, method = "split", train = 0.8, given = 5, goodRating = 4)
+
+# Define training and test sets
+eval_train <- getData(eval_scheme, "train") #<<
+eval_known <- getData(eval_scheme, "known")
+eval_unknown <- getData(eval_scheme, "unknown")
+
+# Build the model from the training set
+IBCF_train <- Recommender(eval_train, "IBCF") #<<
+
+# Make predictions using the known set
+IBCF_predictions <- predict(IBCF_train, eval_known, type = "ratings")
+```
+
+
+---
+
+```{r ibcf-topn-recommendations, echo=FALSE}
+IBCF_topn <- getTopNLists(IBCF_predictions)
+```
+
+## Top recommended movies for a user
+
+```{r ibcf-topn-recommendations-user1, echo=FALSE}
+IBCF_topn_user1 <- as.data.frame(IBCF_topn@items[[1]])
+colnames(IBCF_topn_user1) <- "movie_ID"
+IBCF_topn_user1 <- IBCF_topn_user1 %>%
+  mutate(
+    title = unname(get_movie_title_by_ID[movie_ID]),
+    genres = str_replace_all(unname(get_movie_genre_by_ID[movie_ID]), "\\|", ", ")
+  )
+
+IBCF_topn_user1 %>%
+  knitr::kable(format = "html") %>%
+  kableExtra::kable_styling(font_size = 16)
+```
+
+---
+
+```{r build-models, echo=FALSE}
+# UBCF
+UBCF_train <- Recommender(eval_train, "UBCF")
+UBCF_predictions <- predict(UBCF_train, eval_known, type = "ratings")
+
+# SVD
+SVD_train <- Recommender(eval_train, "SVD")
+SVD_predictions <- predict(SVD_train, eval_known, type = "ratings")
+
+# POPULAR
+POPULAR_train <- Recommender(eval_train, "POPULAR")
+POPULAR_predictions <- predict(POPULAR_train, eval_known, type = "ratings")
+
+# RANDOM
+RANDOM_train <- Recommender(eval_train, "RANDOM")
+RANDOM_predictions <- predict(RANDOM_train, eval_known, type = "ratings")
+```
+
+## Comparing models: evaluation of rating predictions
+
+.pull-left[
+- .term[Root mean square error (RMSE)]: Standard deviation of the difference between actual and predicted ratings. Magnifies outliers.
+
+- .term[Mean squared error (MSE)]: RMSE squared 
+
+- .term[Mean absolute error (MAE)]: Mean of the absolute difference between actual and predicted ratings. Weights all predictions equally.
+
+- .green[Smaller values are better, but how small is "good"?]
+]
+
+.pull-right[
+```{r all-predictions-accuracy, highlight.output=1}
+all_models_accuracy <- rbind(
+  IBCF = calcPredictionAccuracy(IBCF_predictions, eval_unknown),
+  UBCF = calcPredictionAccuracy(UBCF_predictions, eval_unknown),
+  SVD = calcPredictionAccuracy(SVD_predictions, eval_unknown),  
+  POPULAR = calcPredictionAccuracy(POPULAR_predictions, eval_unknown),
+  RANDOM = calcPredictionAccuracy(RANDOM_predictions, eval_unknown)  
+)
+
+round(all_models_accuracy, digits = 3) %>%
+  knitr::kable(format = "html") %>%
+  kableExtra::kable_styling(font_size = 10)
+```
+]
+
+---
+
+## Comparing models: evaluation of top recommendations
+
+```{r evaluate-models-topn, highlight.output=1:2}
+models_to_evaluate <- list(
+  IBCF_cosine = list(name = "IBCF", param = list(method = "cosine")),
+  UBCF_cosine = list(name = "UBCF", param = list(method = "cosine")),
+  SVD_center = list(name = "SVD", param = list(normalize = "center")),
+  POPULAR_center = list(name = "POPULAR", param = list(normalize = "center")),
+  RANDOM = list(name = "RANDOM", param = NULL)
+)
+n_recommendations <- c(1, 5, seq(10, 100, 10))
+eval_results <- evaluate(eval_scheme, method = models_to_evaluate, n = n_recommendations)
+```
+
+---
+
+## Comparing models: evaluation of top recommendations (cont'd)
+
+.pull-left[
+.center[
+.term[Receiver-operator characteristic]
+]
+```{r plot-roc-curve, echo=FALSE}
+plot(eval_results, annotate = 1, legend = "topleft")
+```
+]
+
+.pull-right[
+.center[
+.term[Precision-recall]
+]
+```{r plot-precision-recall, echo=FALSE}
+plot(eval_results, "prec/rec", annotate = 1, legend = "bottomright")
+```
+]
+
+---
+
+## Conclusions
+
+- These analyses show that the SVD and POPULAR recommendation models had the best overall performance for the movie dataset
+
+- I was surprised that the collaborative filtering algorithms didn't perform better than the POPULAR model, but this may be because the MovieLens educational dataset is "idealized" and does not reflect real-world user ratings
+
+- Using recommenderlab was a good learning experience, but it feels a little clunky (eg, plots aren't ggplot quality) and some functions are deprecated or did not work
+
+---
+
+## Endnotes
+
+.green[This presentation was created using RMarkdown and the 'xaringan' and 'xaringanthemer' packages.]
+
+https://cran.r-project.org/web/packages/xaringan/
+
+https://pkg.garrickadenbuie.com/xaringanthemer/
+
+Hill A. Meet xaringan: Making slides in R Markdown. 2019-01-16. https://arm.rbind.io/slides/xaringan.html#1
+
+Xie Y. Presentation Ninja with xaringan. 2016-12-12 (updated 2021-05-12). https://slides.yihui.org/xaringan/#1
+
+
+.green[MovieLens dataset available from https://grouplens.org/datasets/movielens/]
