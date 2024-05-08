@@ -18,29 +18,29 @@
  *  Version: 0.4.2
  *
  * ------------------------------------------------------- */
-@import url(https://fonts.googleapis.com/css?family=Leto:300,300i&display=swap);
-@import url(https://fonts.googleapis.com/css?family=Open+Sans&display=swap);
+@import url(https://fonts.googleapis.com/css?family=Noto+serif:300,300i&display=swap);
+@import url(https://fonts.googleapis.com/css?family=Droid+Serif&display=swap);
 @import url(https://fonts.googleapis.com/css?family=Fira+Mono&display=swap);
 
 
 :root {
   /* Fonts */
-  --text-font-family: Leto;
+  --text-font-family: 'Noto serif';
   --text-font-is-google: 1;
   --text-font-family-fallback: -apple-system, BlinkMacSystemFont, avenir next, avenir, helvetica neue, helvetica, Ubuntu, roboto, noto, segoe ui, arial;
   --text-font-base: sans-serif;
-  --header-font-family: 'Open Sans';
+  --header-font-family: 'Droid Serif';
   --header-font-is-google: 1;
   --header-font-family-fallback: Georgia, serif;
   --code-font-family: 'Fira Mono';
   --code-font-is-google: 1;
   --base-font-size: 20px;
   --text-font-size: 1.0rem;
-  --code-font-size: 0.75rem;
+  --code-font-size: 0.5rem;
   --code-inline-font-size: 1em;
-  --header-h1-font-size: 0.8rem;
-  --header-h2-font-size: 2.25rem;
-  --header-h3-font-size: 1.75rem;
+  --header-h1-font-size: 1.5rem;
+  --header-h2-font-size: 1.2rem;
+  --header-h3-font-size: 0.9rem;
 
   /* Colors */
   --text-color: #272822;
@@ -61,6 +61,7 @@
   --white: #FFFFFF;
   --black: #272822;
   --red: #f34213;
+  --gold: #fac505;
   --blue: #0a066b;
   --green: #136f63;
 }
@@ -299,6 +300,12 @@ table.dataTable.hover tbody tr:hover, table.dataTable.display tbody tr:hover {
 }
 .bg-red {
   background-color: var(--red);
+}
+.gold {
+  color: var(--gold);
+}
+.bg-gold {
+  background-color: var(--gold);
 }
 .blue {
   color: var(--blue);

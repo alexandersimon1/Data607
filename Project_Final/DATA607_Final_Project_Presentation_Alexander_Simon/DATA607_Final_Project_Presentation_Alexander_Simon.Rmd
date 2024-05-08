@@ -1,5 +1,6 @@
 ---
-title: "DATA607 Final Project + Presentation" 
+title: "DATA607 Final Project"
+subtitle: "Creation and comparison of movie recommender models with the recommenderlab R package"
 author: "Alexander Simon"
 date: "2024-05-08"
 output:
@@ -9,6 +10,7 @@ output:
     nature:
       highlightLines: true
     ratio: '16:9'
+    self_contained: true
 ---
 
 ```{r setup, include=FALSE}
@@ -29,29 +31,33 @@ library(kableExtra)
 library(xaringanthemer)
 style_mono_accent(
   base_color = "#23395b",
-  header_font_google = google_font("Open Sans"),
-  text_font_google   = google_font("Leto", "300", "300i"),
+  header_font_google = google_font("Droid Serif"),
+  text_font_google   = google_font("Noto serif", "300", "300i"),
   code_font_google   = google_font("Fira Mono"),
   base_font_size = "20px",
   text_font_size = "1.0rem",
-  header_h1_font_size = "0.8rem",  
-  code_font_size = "0.75rem",  
+  header_h1_font_size = "1.5rem", 
+  header_h2_font_size = "1.2rem",
+  header_h3_font_size = "0.9rem",  
+  code_font_size = "0.5rem",  
   colors = c(
     red = "#f34213",
+    gold = "#fac505",    
     blue = "#0a066b",
     green = "#136f63")
 )
 
 extra_css <- list(
-  ".bottom" = list(
+  ".slidenum" = list(
     "position" = "fixed",
     "text-align" = "right",
-    "font-family" = "\"Open Sans\"",
+    "font-family" = "\"Droid Serif\"",
+    "font-size" = "14px",
     "line-height" = 0.7,
     "right" = 0,
     "bottom" = 0,
-    "padding-right" = "100px",
-    "padding-bottom" = "100px"
+    "padding-right" = "50px",
+    "padding-bottom" = "50px"
     ),
   ".term" = list(
     "font-weight" = "bold",
@@ -62,28 +68,32 @@ extra_css <- list(
 style_extra_css(css = extra_css, outfile = "mycss.css")
 ```
 
+class: center, middle, title-slide
+background-image: url("https://github.com/alexandersimon1/Data607/blob/main/Project_Final/background-020.jpg?raw=true")
 
-class: title-slide
+## DATA607 Final Project
 
- ## DATA607 Final Project
-### Creation and comparison of <br> movie recommender models <br> with the recommenderlab R package
+### .gold[Creation and comparison of movie recommender models with the recommenderlab R package]
 
-<div class="bottom">
-<p> Alexander Simon </p>
-<p> 2024-05-08 </p>
-</div>
+.gold[Alexander Simon]
+
+.gold[2024-05-08]
 
 ---
 
 ## Project goals
 
-- My overall goal was to learn more about recommender systems by creating and comparing recommender models using the recommenderlab R package
+- My primary goal was to learn more about recommender systems by creating and comparing recommender models using the recommenderlab R package
 
 - Unexpected issues
   - Neither of my originally proposed datasets were suitable
   - Some recommenderlab functions did not work, so I developed workarounds using Tidyverse
   
-- As an extended goal, I also challenged myself to create this presentation in R, which I've never done before
+- As an extended goal, I also challenged myself to create this presentation in R
+
+<div class="slidenum">
+<p> 1 </p>
+</div>
 
 ---
 
@@ -103,6 +113,10 @@ class: title-slide
 <img src = "https://github.com/alexandersimon1/Data607/blob/main/Project_Final/movielens.png?raw=true" />
 
 ]
+
+<div class="slidenum">
+<p> 2 </p>
+</div>
 
 ---
 
@@ -183,6 +197,10 @@ movie_titles <- movie_titles %>%
   select(-genres)
 ```
 
+<div class="slidenum">
+<p> 3 </p>
+</div>
+
 ---
 
 ## Tidying the data (cont'd)
@@ -190,6 +208,10 @@ movie_titles <- movie_titles %>%
 ```{r inspect-movie-titles-df, echo=FALSE, highlight.output=c(3)}
 head(movie_titles, 10)
 ```
+
+<div class="slidenum">
+<p> 4 </p>
+</div>
 
 ---
 
@@ -240,6 +262,10 @@ ggplot(n_users, aes(x = n)) +
   theme(axis.title = element_text(face = "bold"))
 ```
 ]
+
+<div class="slidenum">
+<p> 5 </p>
+</div>
 
 ---
 
@@ -343,6 +369,10 @@ ggplot(genre_avg_rating, aes(x = reorder(factor(genre), diff_global_mean),
 ```
 ]
 
+<div class="slidenum">
+<p> 6 </p>
+</div>
+
 ---
 
 ## Recommender models in recommenderlab
@@ -358,6 +388,11 @@ ggplot(genre_avg_rating, aes(x = reorder(factor(genre), diff_global_mean),
 - .term[Random] - recommends random items, used as a baseline for evaluating model performance
 
 .footnote[.footnotesize[Hahsler M. 2014. recommenderlab: Lab for Developing and Testing Recommender Algorithms.]]
+
+<div class="slidenum">
+<p> 7 </p>
+</div>
+
 ---
 
 ```{r filter-ratings-users, echo=FALSE}
@@ -424,6 +459,9 @@ IBCF_train <- Recommender(eval_train, "IBCF") #<<
 IBCF_predictions <- predict(IBCF_train, eval_known, type = "ratings")
 ```
 
+<div class="slidenum">
+<p> 8 </p>
+</div>
 
 ---
 
@@ -446,6 +484,10 @@ IBCF_topn_user1 %>%
   knitr::kable(format = "html") %>%
   kableExtra::kable_styling(font_size = 16)
 ```
+
+<div class="slidenum">
+<p> 9 </p>
+</div>
 
 ---
 
@@ -495,6 +537,10 @@ round(all_models_accuracy, digits = 3) %>%
 ```
 ]
 
+<div class="slidenum">
+<p> 10 </p>
+</div>
+
 ---
 
 ## Comparing models: evaluation of top recommendations
@@ -510,6 +556,10 @@ models_to_evaluate <- list(
 n_recommendations <- c(1, 5, seq(10, 100, 10))
 eval_results <- evaluate(eval_scheme, method = models_to_evaluate, n = n_recommendations)
 ```
+
+<div class="slidenum">
+<p> 11 </p>
+</div>
 
 ---
 
@@ -533,6 +583,13 @@ plot(eval_results, "prec/rec", annotate = 1, legend = "bottomright")
 ```
 ]
 
+- .term[Precision] is the proportion of correctly recommended items among all recommended items
+- .term[Recall] is the proportion of correctly recommended items among all useful recommendations
+
+<div class="slidenum">
+<p> 12 </p>
+</div>
+
 ---
 
 ## Conclusions
@@ -542,6 +599,10 @@ plot(eval_results, "prec/rec", annotate = 1, legend = "bottomright")
 - I was surprised that the collaborative filtering algorithms didn't perform better than the POPULAR model, but this may be because the MovieLens educational dataset is "idealized" and does not reflect real-world user ratings
 
 - Using recommenderlab was a good learning experience, but it feels a little clunky (eg, plots aren't ggplot quality) and some functions are deprecated or did not work
+
+<div class="slidenum">
+<p> 13 </p>
+</div>
 
 ---
 
@@ -559,3 +620,7 @@ Xie Y. Presentation Ninja with xaringan. 2016-12-12 (updated 2021-05-12). https:
 
 
 .green[MovieLens dataset available from https://grouplens.org/datasets/movielens/]
+
+<div class="slidenum">
+<p> 14 </p>
+</div>
